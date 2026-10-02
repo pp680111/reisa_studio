@@ -45,10 +45,10 @@ export async function runSmoke(): Promise<void> {
     await waitFor("!!document.querySelector('.composer textarea')");
 
     const state = await window.webContents.executeJavaScript(
-      '({title:document.title,heading:document.querySelector(".welcome h1")?.textContent,bridgeKeys:Object.keys(window.reisa||{}),conversationKeys:Object.keys(window.reisa?.conversation||{}),settingsKeys:Object.keys(window.reisa?.settings||{}),nodeAvailable:typeof window.require,overflow:document.documentElement.scrollWidth>innerWidth})',
+      '({title:document.title,blankWelcome:document.querySelector(".conversation-scroll")?.childElementCount === 0,bridgeKeys:Object.keys(window.reisa||{}),conversationKeys:Object.keys(window.reisa?.conversation||{}),settingsKeys:Object.keys(window.reisa?.settings||{}),nodeAvailable:typeof window.require,overflow:document.documentElement.scrollWidth>innerWidth})',
     );
     assert.match(state.title, /Reisa Studio/);
-    assert.match(state.heading, /想法在这里/);
+    assert.equal(state.blankWelcome, true, '新会话输入框上方应保留空白');
     assert.ok(state.bridgeKeys.includes('platform'), '桥应暴露平台信息');
     assert.ok(state.bridgeKeys.includes('conversation'), '桥应暴露受限会话通道');
     assert.ok(state.bridgeKeys.includes('settings'), '桥应暴露受限设置通道');

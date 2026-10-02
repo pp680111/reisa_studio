@@ -15,29 +15,6 @@ export interface Conversation {
 export function createConversation(): Conversation {
   return { id: crypto.randomUUID(), title: '新建会话', draft: '', messages: [], attachments: [] };
 }
-const suggestions = [
-  {
-    id: 'knowledge',
-    icon: 'book',
-    title: '整理我的资料',
-    description: '从零散信息到清晰的知识',
-    prompt: '帮我整理资料，提炼重点并保留来源。',
-  },
-  {
-    id: 'image',
-    icon: 'image',
-    title: '探索视觉灵感',
-    description: '用一句描述开始新的创作',
-    prompt: '我想创作一张极简风格的品牌宣传图，请先帮我完善画面描述。',
-  },
-  {
-    id: 'project',
-    icon: 'folder',
-    title: '推进一个项目',
-    description: '连接素材、想法与下一步',
-    prompt: '帮我查看项目，整理现有素材与下一步计划。',
-  },
-];
 
 /** 会话条目：持久化消息与实时事件合成的展示单元。 */
 type Entry =
@@ -165,7 +142,6 @@ export function ConversationView({
   update,
   capabilityCount,
   openCapabilities,
-  enabledIds,
   notify,
   renderResult,
   bridge,
@@ -175,7 +151,6 @@ export function ConversationView({
   update: (next: Conversation) => void;
   capabilityCount: number;
   openCapabilities: () => void;
-  enabledIds: readonly string[];
   notify: (message: string) => void;
   renderResult: (result: PublicResult) => ReactNode;
   /** 桌面运行时桥；浏览器预览下为 undefined，走本地演示模式。 */
@@ -286,52 +261,7 @@ export function ConversationView({
     <div className={`conversation-layout ${results ? 'with-results' : ''}`}>
       <div className="conversation-column">
         <div className="conversation-scroll">
-          {showWelcome ? (
-            <div className="welcome">
-              <div className="welcome-orbit">
-                <div className="welcome-mark">
-                  <Icon name="sparkles" size={34} />
-                </div>
-                <span className="orbit-dot" />
-              </div>
-              <span className="eyebrow">A LITTLE SPACE FOR BIG IDEAS</span>
-              <h1>
-                想法在这里，
-                <br />
-                <span>慢慢成为现实。</span>
-              </h1>
-              <p>
-                聊聊你的灵感，整理手边的资料，
-                <br className="mobile-break" />
-                或开始一段新的创作。
-              </p>
-              <div className="suggestion-grid">
-                {suggestions
-                  .filter((item) => enabledIds.includes(item.id))
-                  .map((item) => (
-                    <button
-                      key={item.id}
-                      className="suggestion-card"
-                      onClick={() => {
-                        update({ ...conversation, draft: item.prompt });
-                        input.current?.focus();
-                      }}
-                    >
-                      <span className="suggestion-icon">
-                        <Icon name={item.icon} size={21} />
-                      </span>
-                      <strong>{item.title}</strong>
-                      <small>{item.description}</small>
-                      <Icon name="arrowRight" size={16} />
-                    </button>
-                  ))}
-              </div>
-              <div className="welcome-footnote">
-                <span className="status-dot" />
-                一个会话，连接你的工作空间
-              </div>
-            </div>
-          ) : (
+          {showWelcome ? null : (
             <div className="message-list">
               {conversation.sample && (
                 <>

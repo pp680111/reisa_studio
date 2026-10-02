@@ -317,7 +317,6 @@ export function AppShell() {
                   }
                   capabilityCount={capabilityCount}
                   openCapabilities={() => showCapabilities()}
-                  enabledIds={enabled}
                   notify={setNotice}
                   bridge={bridge}
                   toolAction={(toolName) =>
