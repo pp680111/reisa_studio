@@ -2,5 +2,15 @@
   "name": "@reisa/foundation",
   "version": "0.1.0",
   "private": true,
-  "description": "基础配置、凭据、日志、平台适配与作用域存储机制"
+  "description": "基础配置、凭据、平台及作用域存储机制",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@reisa/module-sdk": "workspace:*"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
 }

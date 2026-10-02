@@ -13,6 +13,7 @@ export function AppSidebar({
   activeConversationId,
   navigate,
   newConversation,
+  deleteConversation,
   openQuickSwitch,
   pinned,
   togglePin,
@@ -25,6 +26,7 @@ export function AppSidebar({
   activeConversationId: string;
   navigate: (route: string, conversationId?: string) => void;
   newConversation: () => void;
+  deleteConversation?: (id: string) => void;
   openQuickSwitch: () => void;
   pinned: readonly string[];
   togglePin: (id: string) => void;
@@ -169,20 +171,30 @@ export function AppSidebar({
             </button>
             {recentOpen &&
               conversations.map((conversation) => (
-                <button
-                  key={conversation.id}
-                  className={`recent-item ${route === 'conversation' && activeConversationId === conversation.id ? 'active' : ''}`}
-                  aria-current={
-                    route === 'conversation' && activeConversationId === conversation.id
-                      ? 'page'
-                      : undefined
-                  }
-                  onClick={() => navigate('conversation', conversation.id)}
-                  title={conversation.title}
-                >
-                  <Icon name="chat" size={14} />
-                  <span>{conversation.title}</span>
-                </button>
+                <div className="module-nav-row" key={conversation.id}>
+                  <button
+                    className={`recent-item ${route === 'conversation' && activeConversationId === conversation.id ? 'active' : ''}`}
+                    aria-current={
+                      route === 'conversation' && activeConversationId === conversation.id
+                        ? 'page'
+                        : undefined
+                    }
+                    onClick={() => navigate('conversation', conversation.id)}
+                    title={conversation.title}
+                  >
+                    <Icon name="chat" size={14} />
+                    <span>{conversation.title}</span>
+                  </button>
+                  {deleteConversation && (
+                    <div className="nav-row-actions">
+                      <IconButton
+                        name="close"
+                        label={`删除会话 ${conversation.title}`}
+                        onClick={() => deleteConversation(conversation.id)}
+                      />
+                    </div>
+                  )}
+                </div>
               ))}
           </div>
         )}

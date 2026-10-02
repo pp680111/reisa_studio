@@ -2,7 +2,7 @@
 
 以 Agent 会话为主入口，通过独立功能模块扩展能力的 AI 聚合应用。
 
-当前状态：已按设计文档完成第一阶段界面与代码搭建，采用 React + TypeScript + Vite，并提供 Electron 桌面入口。会话、模块管理、知识库、绘图、项目、翻译与设置均可预览；业务服务、Agent 框架和数据持久化留待后续接入。界面中的示例内容与未接入操作均有明确标记。
+当前状态：主应用（宿主）运行层已完整实现并通过真实模型验证——Electron 桌面入口、会话与流式事件、模型连接配置（含凭据加密）、会话持久化、模块生命周期与能力调用入口、依赖边界检查。功能模块当前未包含（`modules/` 目录按规划预留为空，此前原型的四个模块界面已移除，代码可在 git 历史 93577ee 找回）；模块接入协议与宿主侧全部机制已就绪，新增模块无需修改宿主代码。
 
 ## 开始使用
 
@@ -29,12 +29,13 @@ pnpm format:check    # 代码格式检查
 - [架构设计](docs/architecture.md)：已确认的产品边界、模块协议、工具注册、数据隔离、配置、UI、生命周期和实施验收。
 - [界面设计](docs/ui-design.md)：会话优先布局、模块管理、独立工作区、设置、结果展示和交互规范。
 - [独立模块工作空间](docs/module-ui-design.md)：知识库、绘图、项目和翻译的直接操作界面与交互。
+- [Agent 框架选型](docs/agent-framework-selection.md)：候选框架对比、AI SDK 推荐理由、接入要点与 spike 验收清单。
 
 核心约定：主应用把全部已启用模块的公开能力交给 Agent 框架；框架负责会话及工具调用循环；主应用和模块的数据分别管理，跨边界访问只能通过明确公开的能力接口。
 
 ## 仓库结构
 
-目录划分来自架构设计 §11；翻译模块依据 [独立模块工作空间](docs/module-ui-design.md) §6 列入第一批内置模块。
+目录划分来自架构设计 §11；`modules/` 目录为功能模块预留（workspace 通配、tsconfig 与边界检查均已覆盖）。
 
 ```text
 apps/
@@ -52,11 +53,7 @@ packages/
   foundation/                  基础配置、凭据、平台及作用域存储机制（@reisa/foundation）
   ui/                          共享 UI 组件与设计 Token（@reisa/ui）
 
-modules/                       第一批内置模块（manifest / contracts / runtime / storage / settings / ui / index.ts）
-  knowledge/                   知识库（@reisa/module-knowledge）
-  image/                       绘图（@reisa/module-image）
-  project/                     项目（@reisa/module-project）
-  translation/                 翻译（@reisa/module-translation）
+modules/                       预留目录（workspace 已包含；当前未包含任何功能模块）
 ```
 
 各目录的职责与边界写在对应包的 README 中。
@@ -74,8 +71,10 @@ modules/                       第一批内置模块（manifest / contracts / ru
 
 ## 后续接入内容
 
-- Agent 框架选型与 `agent-adapter` 的具体实现（架构设计 §15）。
-- 能力输入/输出 Schema、运行层注册、模块初始化与真实启停生命周期。
+- [Agent 框架选型](docs/agent-framework-selection.md) 已确认（AI SDK v7 + TypeBox），`agent-adapter` 已实现；真实模型（DeepSeek OpenAI 兼容端点）端到端验证通过（§14.1 第 1 步）。
+- `module-host`（生命周期/注册中心/调用入口）、`foundation`（布局/配置/凭据，驱动选型 `node:sqlite`）、会话持久化（`conversations.sqlite`）、组合根运行时激活、受限 IPC 与 renderer 真实接入均已完成（§14.1 第 2 步）。
+- 功能模块当前按规划不实现；宿主侧协议与机制已就绪，模块可在不动宿主代码的情况下接入（§14.1 第 3 步的验证以内联测试模块完成）。
+- 待办备选：凭据加密的 `safeStorage` 已接入（历史明文重存后自动升级）；会话消息 Markdown 渲染、会话搜索/分页等待定。
 - 文档解析与索引、绘图生成与导出、项目保存及翻译服务。
 - 数据库、文件读写、配置持久化与受限 IPC 业务接口。
 - 运行期数据目录 `app-data/`（架构设计 §7.2）：属运行产物，已加入 `.gitignore`，不入库。

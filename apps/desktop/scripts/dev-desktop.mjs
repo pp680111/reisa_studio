@@ -7,7 +7,7 @@ await server.listen();
 const child = spawn(electron, ['.'], {
   stdio: 'inherit',
   env: { ...process.env, REISA_DEV_URL: 'http://127.0.0.1:5173' },
-  windowsHide: true,
+  // 不要使用 windowsHide：Windows 上 CREATE_NO_WINDOW 会让 Electron 窗口不可见
 });
 child.on('exit', async (code) => {
   await server.close();

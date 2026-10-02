@@ -7,12 +7,15 @@ export function ModuleManager({
   toggle,
   open,
   viewCapabilities,
+  runtimeStates,
 }: {
   modules: readonly ModuleContribution[];
   enabled: readonly string[];
   toggle: (id: string) => void;
   open: (id: string) => void;
   viewCapabilities: (id: string) => void;
+  /** 桌面运行时下各模块的生命周期状态；浏览器预览为 undefined。 */
+  runtimeStates?: Readonly<Record<string, { state: string; error?: string }>>;
 }) {
   const [query, setQuery] = useState('');
   return (
@@ -62,6 +65,17 @@ export function ModuleManager({
               <h2>
                 {module.name}
                 <Badge>{module.source === 'builtin' ? '内置' : '外部'}</Badge>
+                {runtimeStates && (
+                  <Badge>
+                    {runtimeStates[module.id]?.state === 'active'
+                      ? '运行中'
+                      : runtimeStates[module.id]?.state === 'failed'
+                        ? '运行异常'
+                        : runtimeStates[module.id]
+                          ? '已接入运行时'
+                          : '界面原型'}
+                  </Badge>
+                )}
               </h2>
               <p>{module.description}</p>
               <div className="module-card-meta">
@@ -86,14 +100,22 @@ export function ModuleManager({
             </article>
           ))}
       </div>
-      {!modules.some((module) =>
-        `${module.name} ${module.description}`
-          .toLocaleLowerCase()
-          .includes(query.toLocaleLowerCase()),
-      ) && <p className="empty-search">没有匹配的模块</p>}
+      {modules.length > 0 &&
+        !modules.some((module) =>
+          `${module.name} ${module.description}`
+            .toLocaleLowerCase()
+            .includes(query.toLocaleLowerCase()),
+        ) && <p className="empty-search">没有匹配的模块</p>}
+      {modules.length === 0 && (
+        <p className="empty-search">
+          当前没有接入任何模块。模块接入后，这里可以查看、启停并打开其工作空间。
+        </p>
+      )}
       <div className="info-box">
         <Icon name="help" />
-        启停目前只控制界面入口与公开声明展示，运行层生命周期尚未接入。停用不会删除模块数据。
+        {runtimeStates
+          ? '启停驱动运行层生命周期与公开能力集合；未标注「运行中」的模块暂无运行时，启停只保存配置。停用不会删除模块数据。'
+          : '启停目前只控制界面入口与公开声明展示，运行层生命周期尚未接入。停用不会删除模块数据。'}
       </div>
     </div>
   );

@@ -2,5 +2,17 @@
   "name": "@reisa/agent-adapter",
   "version": "0.1.0",
   "private": true,
-  "description": "Agent 框架与模型工具适配层；具体框架选型待实现阶段确定"
+  "description": "Agent 框架与模型工具适配层（AI SDK，选型见 docs/agent-framework-selection.md）",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.62",
+    "@reisa/module-sdk": "workspace:*",
+    "ai": "^7.0.127"
+  },
+  "scripts": {
+    "test:spike": "node --test test/spike.test.mjs"
+  }
 }

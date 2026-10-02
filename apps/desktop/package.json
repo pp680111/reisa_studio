@@ -13,12 +13,13 @@
     "start": "electron ."
   },
   "dependencies": {
+    "@reisa/agent-adapter": "workspace:*",
+    "@reisa/foundation": "workspace:*",
+    "@reisa/module-host": "workspace:*",
     "@reisa/module-sdk": "workspace:*",
     "@reisa/ui": "workspace:*",
-    "@reisa/module-knowledge": "workspace:*",
-    "@reisa/module-image": "workspace:*",
-    "@reisa/module-project": "workspace:*",
-    "@reisa/module-translation": "workspace:*",
+    "@sinclair/typebox": "^0.34.52",
+    "ai": "^7.0.127",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

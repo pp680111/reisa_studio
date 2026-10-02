@@ -1,39 +1,14 @@
-const { app, BrowserWindow } = require('electron');
+// 以冒烟模式启动真实应用主进程（REISA_SMOKE=1），退出码即测试结果。
+// 冒烟断言位于 apps/desktop/src/main/smoke.ts，随主进程一同打包。
+const { spawn } = require('node:child_process');
 const path = require('node:path');
-const assert = require('node:assert/strict');
 
-app.whenReady().then(async () => {
-  const errors = [];
-  const window = new BrowserWindow({
-    show: false,
-    width: 1440,
-    height: 900,
-    webPreferences: {
-      preload: path.resolve(__dirname, '../apps/desktop/dist-electron/preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  window.webContents.on('console-message', (_event, level, message) => {
-    if (level === 3) errors.push(message);
-  });
-  window.webContents.on('render-process-gone', (_event, detail) => errors.push(detail.reason));
-  try {
-    await window.loadFile(path.resolve(__dirname, '../apps/desktop/dist/index.html'));
-    const state = await window.webContents.executeJavaScript(
-      '({title:document.title,heading:document.querySelector("h1")?.textContent,bridge:window.reisa,nodeAvailable:typeof window.require,overflow:document.documentElement.scrollWidth>innerWidth})',
-    );
-    assert.match(state.title, /Reisa Studio/);
-    assert.match(state.heading, /想法在这里/);
-    assert.equal(state.bridge.uiOnly, true);
-    assert.equal(state.nodeAvailable, 'undefined');
-    assert.equal(state.overflow, false);
-    assert.deepEqual(errors, []);
-    console.log('Electron smoke passed:', JSON.stringify(state));
-    app.exit(0);
-  } catch (error) {
-    console.error(error);
-    app.exit(1);
-  }
+const electronBinary = require(
+  path.resolve(__dirname, '..', 'apps', 'desktop', 'node_modules', 'electron'),
+);
+const proc = spawn(electronBinary, ['.'], {
+  cwd: path.resolve(__dirname, '..', 'apps', 'desktop'),
+  env: { ...process.env, REISA_SMOKE: '1' },
+  stdio: 'inherit',
 });
+proc.on('exit', (code) => process.exit(code === 0 ? 0 : 1));

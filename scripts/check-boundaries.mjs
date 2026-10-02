@@ -1,4 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { builtinModules } from 'node:module';
 const root = resolve(import.meta.dirname, '..');
@@ -14,8 +15,12 @@ async function visit(directory) {
     if (!/\.(?:ts|tsx|mjs)$/.test(entry.name) || entry.name.endsWith('.d.mts')) continue;
     const file = relative(root, path).replaceAll('\\', '/');
     const source = await readFile(path, 'utf8');
+    // renderer 侧代码：宿主 renderer、模块 UI/设置/契约、共享 UI 包。
+    // 模块 runtime/storage 是主进程运行层，允许使用平台模块。
     const renderer =
-      file.includes('/renderer/') || file.startsWith('modules/') || file.startsWith('packages/ui/');
+      file.includes('/renderer/') ||
+      /^modules\/[^/]+\/(ui|settings|contracts)\//.test(file) ||
+      file.startsWith('packages/ui/');
     for (const match of source.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)['"]([^'"]+)['"]/g)) {
       const dependency = match[1];
       const target = dependency.startsWith('.')
@@ -36,8 +41,9 @@ async function visit(directory) {
         violations.push(`${file}: foundation/shared package imports business module ${dependency}`);
       if (
         file.startsWith('apps/desktop/src/renderer/') &&
-        ((dependency.startsWith('@reisa/module-') && dependency !== '@reisa/module-sdk') ||
-          target.startsWith('modules/'))
+        dependency.startsWith('@reisa/') &&
+        dependency !== '@reisa/module-sdk' &&
+        !dependency.startsWith('@reisa/ui')
       )
         violations.push(
           `${file}: host renderer must use the composition root for module contributions`,
@@ -52,12 +58,19 @@ async function visit(directory) {
         )
           violations.push(`${file}: cross-module import ${dependency}`);
       }
-      if (/^@reisa\/[^/]+\/(runtime|storage|settings|ui)(?:\/|$)/.test(dependency))
+      const isRuntimeEntry =
+        file.startsWith('apps/desktop/src/composition/') &&
+        /^@reisa\/module-[^/]+\/runtime$/.test(dependency);
+      if (/^@reisa\/[^/]+\/(storage|settings|ui)(?:\/|$)/.test(dependency))
         violations.push(`${file}: private package subpath ${dependency}`);
+      if (/^@reisa\/[^/]+\/runtime(?:\/|$)/.test(dependency) && !isRuntimeEntry)
+        violations.push(`${file}: runtime entry may only be imported by the composition root`);
     }
   }
 }
-for (const directory of ['apps', 'packages', 'modules']) await visit(join(root, directory));
+for (const directory of ['apps', 'packages', 'modules']) {
+  if (existsSync(join(root, directory))) await visit(join(root, directory));
+}
 if (violations.length) {
   console.error(violations.join('\n'));
   process.exitCode = 1;

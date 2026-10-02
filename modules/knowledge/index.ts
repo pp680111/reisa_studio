@@ -1,1 +1,0 @@
-export { knowledgeModule } from './manifest';

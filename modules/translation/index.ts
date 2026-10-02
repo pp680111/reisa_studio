@@ -1,1 +1,0 @@
-export { translationModule } from './manifest';

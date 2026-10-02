@@ -2,5 +2,16 @@
   "name": "@reisa/module-host",
   "version": "0.1.0",
   "private": true,
-  "description": "模块生命周期管理、能力注册中心与能力调用入口"
+  "description": "模块生命周期管理、能力注册中心与能力调用入口",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@reisa/module-sdk": "workspace:*",
+    "@sinclair/typebox": "^0.34.52"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
 }

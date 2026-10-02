@@ -5,3 +5,6 @@ packages:
 allowBuilds:
   electron: true
   esbuild: true
+minimumReleaseAgeExclude:
+  - '@ai-sdk/gateway@4.0.103'
+  - ai@7.0.127

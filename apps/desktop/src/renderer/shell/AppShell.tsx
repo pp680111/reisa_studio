@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, Icon, IconButton } from '@reisa/ui';
 import { modules } from '../../composition/modules';
 import {
@@ -6,6 +6,7 @@ import {
   createConversation,
   type Conversation,
 } from '../conversation/ConversationView';
+import { getBridge, type ReisaCapability } from '../bridge';
 import { AppSidebar } from './AppSidebar';
 import { ModuleManager } from './ModuleManager';
 import { SettingsPage } from './SettingsPage';
@@ -24,12 +25,15 @@ const sampleConversation: Conversation = {
   sample: true,
 };
 export function AppShell() {
+  const bridge = useMemo(() => getBridge(), []);
+  const bootstrapRef = useRef(false);
   const [route, setRoute] = useState('conversation');
-  const [conversations, setConversations] = useState<Conversation[]>([
-    initialConversation,
-    sampleConversation,
-  ]);
-  const [activeConversationId, setActiveConversationId] = useState(initialConversation.id);
+  const [conversations, setConversations] = useState<Conversation[]>(
+    bridge ? [] : [initialConversation, sampleConversation],
+  );
+  const [activeConversationId, setActiveConversationId] = useState(
+    bridge ? '' : initialConversation.id,
+  );
   const [collapsedPreference, setCollapsedPreference] = usePreference(
     'collapsed',
     false,
@@ -50,12 +54,64 @@ export function AppShell() {
   const [capabilityModuleId, setCapabilityModuleId] = useState<string | null>(null);
   const [settingsModuleId, setSettingsModuleId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  const [liveCapabilities, setLiveCapabilities] = useState<ReisaCapability[] | null>(null);
+  const [modelLabel, setModelLabel] = useState('模型未配置');
+  const [runtimeStates, setRuntimeStates] = useState<
+    Record<string, { state: string; error?: string }>
+  >({});
   const availableModules = navigationModules(modules, enabled, pinned);
-  const capabilityCount = modules
-    .filter((module) => enabled.includes(module.id))
-    .reduce((sum, module) => sum + module.capabilities.length, 0);
-  const conversation = conversations.find((item) => item.id === activeConversationId)!;
+  const capabilityCount =
+    liveCapabilities?.length ??
+    modules
+      .filter((module) => enabled.includes(module.id))
+      .reduce((sum, module) => sum + module.capabilities.length, 0);
+  const conversation = conversations.find((item) => item.id === activeConversationId);
   const currentModule = modules.find((module) => module.id === route);
+
+  // 桌面运行时：加载会话列表（空则创建首个会话）与全量能力描述
+  useEffect(() => {
+    if (!bridge || bootstrapRef.current) return;
+    bootstrapRef.current = true;
+    void (async () => {
+      const list = await bridge.conversation.listConversations();
+      const first = list[0];
+      if (first) {
+        setConversations(
+          list.map((item) => ({
+            id: item.id,
+            title: item.title,
+            draft: '',
+            messages: [],
+            attachments: [],
+          })),
+        );
+        setActiveConversationId(first.id);
+      } else {
+        const created = await bridge.conversation.createConversation();
+        setConversations([
+          { id: created.id, title: created.title, draft: '', messages: [], attachments: [] },
+        ]);
+        setActiveConversationId(created.id);
+      }
+      setLiveCapabilities(await bridge.conversation.listCapabilities());
+      const moduleStates = await bridge.conversation.listModules();
+      const states: Record<string, string> = {};
+      for (const item of moduleStates) states[item.id] = item.state;
+      setRuntimeStates(
+        Object.fromEntries(moduleStates.map((item) => [item.id, { state: item.state }])),
+      );
+      // 运行时模块的启用状态以宿主为准；非运行时模块保留本地偏好
+      setEnabled((previous) => {
+        const withoutRuntime = previous.filter((id) => !(id in states));
+        const activeRuntime = Object.entries(states)
+          .filter(([, state]) => state === 'active')
+          .map(([id]) => id);
+        return [...withoutRuntime, ...activeRuntime];
+      });
+      const connection = await bridge.settings.getModelConnection();
+      setModelLabel(connection?.modelId ?? '模型未配置');
+    })();
+  }, [bridge]);
   const navigate = (nextRoute: string, conversationId?: string) => {
     if (
       nextRoute !== 'conversation' &&
@@ -72,6 +128,21 @@ export function AppShell() {
       setRecent((previous) => [nextRoute, ...previous.filter((id) => id !== nextRoute)]);
   };
   const newConversation = () => {
+    if (bridge) {
+      void bridge.conversation.createConversation().then((created) => {
+        const next: Conversation = {
+          id: created.id,
+          title: created.title,
+          draft: '',
+          messages: [],
+          attachments: [],
+        };
+        setConversations((previous) => [next, ...previous]);
+        setActiveConversationId(next.id);
+        setRoute('conversation');
+      });
+      return;
+    }
     const next = createConversation();
     setConversations((previous) => [next, ...previous]);
     setActiveConversationId(next.id);
@@ -119,14 +190,31 @@ export function AppShell() {
   };
   const toggleModule = (id: string) => {
     const disabling = enabled.includes(id);
-    setEnabled((previous) =>
-      disabling ? previous.filter((item) => item !== id) : [...previous, id],
-    );
-    if (disabling && route === id) {
-      setRoute('modules');
-      setNotice('当前模块已停用，工作空间入口已撤销。');
+    const apply = () => {
+      setEnabled((previous) =>
+        disabling ? previous.filter((item) => item !== id) : [...previous, id],
+      );
+      if (disabling && route === id) {
+        setRoute('modules');
+        setNotice('当前模块已停用，工作空间入口已撤销。');
+      }
+      if (disabling && settingsModuleId === id) setSettingsModuleId(null);
+    };
+    if (!bridge) {
+      apply();
+      return;
     }
-    if (disabling && settingsModuleId === id) setSettingsModuleId(null);
+    void bridge.conversation.setModuleEnabled(id, !disabling).then((result) => {
+      if (result.error) {
+        setNotice(`模块${disabling ? '停用' : '启用'}失败：${result.error}`);
+        return;
+      }
+      apply();
+      setRuntimeStates((previous) => ({
+        ...previous,
+        [id]: { state: result.state ?? (disabling ? 'disabled' : 'active') },
+      }));
+    });
   };
   const togglePin = (id: string) =>
     setPinned((previous) =>
@@ -141,6 +229,12 @@ export function AppShell() {
         [next[position], next[target]] = [next[target]!, next[position]!];
       return next;
     });
+  const deleteConversation = (id: string) => {
+    if (bridge) void bridge.conversation.deleteConversation(id);
+    const remaining = conversations.filter((item) => item.id !== id);
+    setConversations(remaining);
+    if (activeConversationId === id) setActiveConversationId(remaining[0]?.id ?? '');
+  };
   return (
     <div className="app-shell">
       <AppSidebar
@@ -151,6 +245,7 @@ export function AppShell() {
         activeConversationId={activeConversationId}
         navigate={navigate}
         newConversation={newConversation}
+        deleteConversation={deleteConversation}
         openQuickSwitch={() => setQuickOpen(true)}
         pinned={pinned}
         togglePin={togglePin}
@@ -179,14 +274,22 @@ export function AppShell() {
                   ? '模块管理'
                   : route === 'settings'
                     ? '设置'
-                    : conversation.title)}
+                    : (conversation?.title ?? '会话'))}
             </strong>
           </div>
           <div className="header-actions">
             {route === 'conversation' && (
               <>
-                <select className="model-selector" aria-label="主会话模型" disabled>
-                  <option>模型未配置</option>
+                <select
+                  className="model-selector"
+                  aria-label="主会话模型"
+                  title={bridge ? '在设置中配置模型连接' : '模型连接在设置中配置'}
+                  onClick={() => {
+                    if (!bridge) setNotice('模型连接将在基础服务接入后提供。');
+                  }}
+                  disabled={false}
+                >
+                  <option>{modelLabel}</option>
                 </select>
                 <Button variant="ghost" onClick={() => showCapabilities()}>
                   <Icon name="layers" size={16} />
@@ -194,7 +297,7 @@ export function AppShell() {
                 </Button>
               </>
             )}
-            <Badge>UI 预览</Badge>
+            {!bridge && <Badge>UI 预览</Badge>}
           </div>
         </header>
         <main className="workspace-body">
@@ -216,6 +319,12 @@ export function AppShell() {
                   openCapabilities={() => showCapabilities()}
                   enabledIds={enabled}
                   notify={setNotice}
+                  bridge={bridge}
+                  toolAction={(toolName) =>
+                    modules
+                      .flatMap((module) => module.capabilities)
+                      .find((capability) => capability.name === toolName)?.description ?? toolName
+                  }
                   renderResult={(result) => (
                     <ResultContainer result={result} modules={modules} enabled={enabled} />
                   )}
@@ -230,6 +339,7 @@ export function AppShell() {
               toggle={toggleModule}
               open={navigate}
               viewCapabilities={showCapabilities}
+              runtimeStates={bridge ? runtimeStates : undefined}
             />
           </div>
           <div className="page-outlet" hidden={route !== 'settings'}>
@@ -241,6 +351,8 @@ export function AppShell() {
               openModuleSettings={setSettingsModuleId}
               openCapabilities={() => showCapabilities()}
               notify={setNotice}
+              bridge={bridge}
+              modelLabel={modelLabel}
             />
           </div>
           {modules.map((module) => {
@@ -283,7 +395,11 @@ export function AppShell() {
         wide
       >
         <div className="capability-dialog">
-          <p className="muted">只读接口声明 · 运行层尚未注册执行处理器</p>
+          <p className="muted">
+            {bridge
+              ? '只读接口声明 · 由已启用模块运行时注册'
+              : '只读接口声明 · 运行层尚未注册执行处理器'}
+          </p>
           {modules
             .filter((module) =>
               capabilityModuleId ? module.id === capabilityModuleId : enabled.includes(module.id),
@@ -304,6 +420,47 @@ export function AppShell() {
                 ))}
               </section>
             ))}
+          {bridge &&
+            liveCapabilities &&
+            (() => {
+              const selected = liveCapabilities.filter((capability) =>
+                capabilityModuleId
+                  ? capability.id.startsWith(`${capabilityModuleId}/`)
+                  : enabled.some((id) => capability.id.startsWith(`${id}/`)),
+              );
+              const groups = new Map<string, ReisaCapability[]>();
+              for (const capability of selected) {
+                const owner = capability.id.slice(0, capability.id.indexOf('/'));
+                const list = groups.get(owner) ?? [];
+                list.push(capability);
+                groups.set(owner, list);
+              }
+              return (
+                <>
+                  {selected.length === 0 && (
+                    <p className="muted">运行时尚未注册任何能力；普通文本会话仍可用。</p>
+                  )}
+                  {[...groups.entries()].map(([owner, capabilities]) => {
+                    const ownerModule = modules.find((module) => module.id === owner);
+                    return (
+                      <section key={owner}>
+                        <h3>
+                          <Icon name={ownerModule?.navigation?.icon ?? 'layers'} />
+                          {ownerModule?.name ?? owner}
+                          <Badge>运行时 · {capabilities.length} 项</Badge>
+                        </h3>
+                        {capabilities.map((capability) => (
+                          <div className="capability-row" key={capability.id}>
+                            <code>{capability.name}</code>
+                            <p>{capability.description}</p>
+                          </div>
+                        ))}
+                      </section>
+                    );
+                  })}
+                </>
+              );
+            })()}
           {capabilityCount === 0 && !capabilityModuleId && (
             <p>所有模块已停用，仍可使用普通文本会话界面。</p>
           )}
