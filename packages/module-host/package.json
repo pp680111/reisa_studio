@@ -1,0 +1,6 @@
+{
+  "name": "@reisa/module-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "模块生命周期管理、能力注册中心与能力调用入口"
+}

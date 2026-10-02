@@ -1,0 +1,15 @@
+{
+  "name": "@reisa/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "宿主与模块共享的 UI 基础组件与设计 Token",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.tsx",
+    "./styles.css": "./src/styles.css"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "lucide-react": "^0.468.0"
+  }
+}

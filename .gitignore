@@ -1,0 +1,21 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-electron/
+out/
+build/
+coverage/
+.artifacts/
+
+# 运行期数据目录（架构设计 §7.2，属运行产物，不入库）
+app-data/
+
+# 日志与环境变量
+*.log
+.env
+.env.*
+
+# 系统文件
+.DS_Store
+Thumbs.db
+pnpm-lock.yaml

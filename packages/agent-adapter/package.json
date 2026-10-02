@@ -1,0 +1,6 @@
+{
+  "name": "@reisa/agent-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent 框架与模型工具适配层；具体框架选型待实现阶段确定"
+}

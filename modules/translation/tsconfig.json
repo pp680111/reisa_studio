@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {},
+  "include": ["manifest.ts", "index.ts", "contracts", "runtime", "storage", "settings", "ui"]
+}

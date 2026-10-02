@@ -1,0 +1,31 @@
+{
+  "name": "@reisa/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reisa Studio 桌面主应用：窗口、导航、工作区、模块加载与页面挂载",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:desktop": "node scripts/dev-desktop.mjs",
+    "build": "vite build && node scripts/build-electron.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@reisa/module-sdk": "workspace:*",
+    "@reisa/ui": "workspace:*",
+    "@reisa/module-knowledge": "workspace:*",
+    "@reisa/module-image": "workspace:*",
+    "@reisa/module-project": "workspace:*",
+    "@reisa/module-translation": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.0.0",
+    "electron": "^41.0.0",
+    "esbuild": "^0.25.0"
+  }
+}

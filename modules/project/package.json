@@ -1,0 +1,15 @@
+{
+  "name": "@reisa/module-project",
+  "version": "0.1.0",
+  "private": true,
+  "description": "项目模块：素材、笔记与活动",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@reisa/ui": "workspace:*",
+    "react": "^19.2.0",
+    "@reisa/module-sdk": "workspace:*"
+  }
+}
