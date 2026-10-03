@@ -2595,3 +2595,144 @@ blockquote {
     scroll-behavior: auto !important;
   }
 }
+
+/* ===== 主会话：Markdown 排版、用量行（追加于文件末尾） ===== */
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown p {
+  margin: 0 0 10px;
+  line-height: 1.75;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.markdown h1 {
+  font-size: 18px;
+}
+.markdown h2 {
+  font-size: 16px;
+}
+.markdown ul,
+.markdown ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.markdown li {
+  line-height: 1.65;
+}
+.markdown code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+}
+.markdown pre {
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+.markdown pre code {
+  padding: 0;
+  border: none;
+  background: none;
+}
+.markdown blockquote {
+  margin: 0 0 10px;
+  padding: 2px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+}
+.markdown table {
+  border-collapse: collapse;
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+}
+.markdown th {
+  background: var(--surface-secondary);
+}
+.markdown a {
+  color: var(--accent);
+}
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 14px 0;
+}
+.usage-line {
+  margin: 4px 0 12px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* ===== 侧栏：会话搜索、内联重命名、加载更多 ===== */
+.recent-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 12px 6px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--faint);
+}
+.recent-search input {
+  border: none;
+  outline: none;
+  background: none;
+  width: 100%;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.recent-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 2px 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--focus);
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 4px 12px 8px;
+  padding: 6px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.load-more:hover {
+  background: var(--hover);
+  color: var(--text);
+}

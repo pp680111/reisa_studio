@@ -16,6 +16,8 @@ import { navigationModules } from './navigation.mjs';
 import { isBoolean, isStrings, isTheme, usePreference } from './preferences';
 
 const initialConversation = createConversation();
+/** 会话列表分页大小；上一批满页时侧栏显示「加载更多」。 */
+const CONVERSATION_PAGE_SIZE = 20;
 const sampleConversation: Conversation = {
   id: 'sample-brand',
   title: '品牌灵感与创作',
@@ -73,7 +75,7 @@ export function AppShell() {
     if (!bridge || bootstrapRef.current) return;
     bootstrapRef.current = true;
     void (async () => {
-      const list = await bridge.conversation.listConversations();
+      const list = await bridge.conversation.listConversations({ limit: CONVERSATION_PAGE_SIZE });
       const first = list[0];
       if (first) {
         setConversations(
@@ -235,6 +237,34 @@ export function AppShell() {
     setConversations(remaining);
     if (activeConversationId === id) setActiveConversationId(remaining[0]?.id ?? '');
   };
+  const renameConversation = (id: string, title: string) => {
+    if (bridge) void bridge.conversation.renameConversation(id, title);
+    setConversations((previous) =>
+      previous.map((item) => (item.id === id ? { ...item, title } : item)),
+    );
+  };
+  const loadMoreConversations = () => {
+    if (!bridge) return;
+    void bridge.conversation
+      .listConversations({ limit: CONVERSATION_PAGE_SIZE, offset: conversations.length })
+      .then((list) => {
+        if (list.length === 0) return;
+        const known = new Set(conversations.map((item) => item.id));
+        setConversations((previous) => [
+          ...previous,
+          ...list
+            .filter((item) => !known.has(item.id))
+            .map((item) => ({
+              id: item.id,
+              title: item.title,
+              draft: '',
+              messages: [],
+              attachments: [],
+            })),
+        ]);
+      });
+  };
+  const canLoadMore = bridge !== undefined && conversations.length >= CONVERSATION_PAGE_SIZE;
   return (
     <div className="app-shell">
       <AppSidebar
@@ -245,7 +275,10 @@ export function AppShell() {
         activeConversationId={activeConversationId}
         navigate={navigate}
         newConversation={newConversation}
+        renameConversation={renameConversation}
         deleteConversation={deleteConversation}
+        loadMoreConversations={loadMoreConversations}
+        canLoadMore={canLoadMore}
         openQuickSwitch={() => setQuickOpen(true)}
         pinned={pinned}
         togglePin={togglePin}

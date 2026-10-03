@@ -6,6 +6,7 @@ out/
 build/
 coverage/
 .artifacts/
+release/
 
 # 运行期数据目录（架构设计 §7.2，属运行产物，不入库）
 app-data/

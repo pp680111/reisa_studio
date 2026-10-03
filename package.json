@@ -8,6 +8,7 @@
     "dev": "pnpm --filter @reisa/desktop dev",
     "dev:desktop": "pnpm --filter @reisa/desktop dev:desktop",
     "build": "pnpm typecheck && pnpm check:boundaries && pnpm --filter @reisa/desktop build",
+    "dist": "pnpm --filter @reisa/desktop build && pnpm --filter @reisa/desktop dist",
     "typecheck": "tsc -p tsconfig.json",
     "preview": "pnpm --filter @reisa/desktop preview",
     "start": "pnpm --filter @reisa/desktop start",

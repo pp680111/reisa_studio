@@ -1,19 +1,44 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { PublicResult } from '@reisa/module-sdk';
 import { Badge, Button, EmptyState, Icon, IconButton } from '@reisa/ui';
 import { ToolCallRecord, type ToolStatus } from './ToolCallRecord';
-import type { ReisaBridge, ReisaEvent, ReisaMessage } from '../bridge';
+import type { ReisaAttachmentInput, ReisaBridge, ReisaEvent, ReisaMessage } from '../bridge';
 
 export interface Conversation {
   id: string;
   title: string;
   draft: string;
   messages: { id: string; text: string; role: 'user' | 'notice' }[];
-  attachments: { id: string; name: string }[];
+  attachments: { id: string; name: string; file?: File }[];
   sample?: boolean;
 }
 export function createConversation(): Conversation {
   return { id: crypto.randomUUID(), title: '新建会话', draft: '', messages: [], attachments: [] };
+}
+
+/** 用户消息中附件块的起始分隔符（由主进程合成，见 conversation-manager）。 */
+const ATTACHMENT_DELIMITER = '--- 附件：';
+
+/** 用户消息展示：截去附件内联内容，只显示正文与附件摘要。 */
+export function displayUserText(text: string): string {
+  const cut = text.indexOf(`\n\n${ATTACHMENT_DELIMITER}`);
+  const head = cut === -1 ? text : text.slice(0, cut);
+  const names =
+    cut === -1 ? [] : [...text.slice(cut).matchAll(/--- 附件：(.+?) ---/g)].map((m) => m[1]);
+  if (names.length === 0) return head;
+  return `${head}\n附件：${names.join('、')}`;
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  const chunk = 0x8000;
+  for (let offset = 0; offset < buffer.length; offset += chunk) {
+    binary += String.fromCharCode(...buffer.subarray(offset, offset + chunk));
+  }
+  return btoa(binary);
 }
 
 /** 会话条目：持久化消息与实时事件合成的展示单元。 */
@@ -46,7 +71,7 @@ function messagesToEntries(messages: ReisaMessage[]): Entry[] {
   for (const message of messages) {
     if (message.role === 'user') {
       const text = typeof message.content === 'string' ? message.content : '';
-      if (text) entries.push({ kind: 'text', role: 'user', text });
+      if (text) entries.push({ kind: 'text', role: 'user', text: displayUserText(text) });
       continue;
     }
     if (!Array.isArray(message.content)) continue;
@@ -163,6 +188,10 @@ export function ConversationView({
   const [results, setResults] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [running, setRunning] = useState(false);
+  const [lastUsage, setLastUsage] = useState<{
+    inputTokens?: number;
+    outputTokens?: number;
+  } | null>(null);
   const runningRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -224,15 +253,36 @@ export function ConversationView({
     if (!bridge || runningRef.current) return;
     runningRef.current = true;
     setRunning(true);
+    setLastUsage(null);
     const isFirst = entries.length === 0;
+    const outgoing = conversation.attachments;
     update({
       ...conversation,
       title: isFirst ? text.slice(0, 20) || '新会话' : conversation.title,
       draft: '',
+      attachments: [],
     });
-    setEntries((previous) => [...previous, { kind: 'text', role: 'user', text }]);
+    setEntries((previous) => [
+      ...previous,
+      {
+        kind: 'text',
+        role: 'user',
+        text:
+          text + (outgoing.length ? `\n附件：${outgoing.map((file) => file.name).join('、')}` : ''),
+      },
+    ]);
     try {
-      await bridge.conversation.send(conversation.id, text);
+      const attachments: ReisaAttachmentInput[] = [];
+      for (const file of outgoing) {
+        if (!file.file) continue;
+        attachments.push({
+          name: file.name,
+          ...(file.file.type ? { mediaType: file.file.type } : {}),
+          dataBase64: await fileToBase64(file.file),
+        });
+      }
+      const result = await bridge.conversation.send(conversation.id, text, attachments);
+      if (result.usage) setLastUsage(result.usage);
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error));
     } finally {
@@ -352,8 +402,8 @@ export function ConversationView({
                           <span className="assistant-avatar">R</span>
                           <strong>Reisa</strong>
                         </div>
-                        <div className="assistant-body">
-                          <p className="assistant-paragraph">{entry.text}</p>
+                        <div className="assistant-body markdown">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text}</ReactMarkdown>
                         </div>
                       </div>
                     )
@@ -371,6 +421,12 @@ export function ConversationView({
                     />
                   ),
                 )}
+              {lastUsage && !running && (
+                <div className="usage-line" title="服务商上报的本次运行整体用量，仅用于展示">
+                  本轮用量 · 输入 {lastUsage.inputTokens ?? '—'} tokens · 输出{' '}
+                  {lastUsage.outputTokens ?? '—'} tokens
+                </div>
+              )}
               <div ref={messagesEnd} />
             </div>
           )}
@@ -420,8 +476,11 @@ export function ConversationView({
               <div>
                 <IconButton
                   name="attach"
-                  label={bridge ? '附件能力即将提供' : '添加附件（只展示文件名）'}
-                  disabled={Boolean(bridge)}
+                  label={
+                    bridge
+                      ? '添加附件（文本内容随消息发送，其余保存副本）'
+                      : '添加附件（只展示文件名）'
+                  }
                   onClick={() => fileInput.current?.click()}
                 />
                 <button className="capability-trigger" onClick={openCapabilities}>
@@ -455,6 +514,7 @@ export function ConversationView({
                 const files = Array.from(e.target.files ?? []).map((file) => ({
                   id: crypto.randomUUID(),
                   name: file.name,
+                  file,
                 }));
                 update({ ...conversation, attachments: [...conversation.attachments, ...files] });
                 e.target.value = '';

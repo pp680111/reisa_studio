@@ -2,6 +2,7 @@ import {
   startConversation,
   type ConversationEvent,
   type ConversationSession,
+  type ConversationUsage,
 } from '@reisa/agent-adapter';
 import type { LanguageModel, ModelMessage } from 'ai';
 import type { ModuleHost } from '@reisa/module-host';
@@ -20,6 +21,90 @@ export interface ConversationManagerOptions {
 
 export type TurnStatus = 'completed' | 'cancelled' | 'error';
 
+export interface IncomingAttachment {
+  readonly name: string;
+  readonly mediaType?: string;
+  /** base64 编码的文件内容。 */
+  readonly dataBase64: string;
+}
+
+const MAX_ATTACHMENT_COUNT = 10;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 30 * 1024 * 1024;
+/** 文本类附件内容内联进消息的上限；超限时只随消息携带名称与大小。 */
+const INLINE_TEXT_BYTES = 200 * 1024;
+const TEXT_EXTENSIONS = new Set([
+  '.txt',
+  '.md',
+  '.markdown',
+  '.json',
+  '.csv',
+  '.log',
+  '.yaml',
+  '.yml',
+  '.xml',
+  '.html',
+  '.css',
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.ts',
+  '.tsx',
+  '.py',
+  '.rs',
+  '.go',
+  '.java',
+  '.sql',
+  '.sh',
+]);
+
+export const ATTACHMENT_DELIMITER = '--- 附件：';
+
+function isTextLike(name: string, mediaType?: string): boolean {
+  if (mediaType?.startsWith('text/')) return true;
+  const dot = name.lastIndexOf('.');
+  const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
+  return TEXT_EXTENSIONS.has(ext);
+}
+
+/** 将附件写盘并合成为消息文本：文本类内联内容，其余携带名称与大小。 */
+async function composeUserContent(
+  conversationId: string,
+  text: string,
+  attachments: readonly IncomingAttachment[],
+  store: ConversationStore,
+): Promise<string> {
+  if (attachments.length === 0) return text;
+  if (attachments.length > MAX_ATTACHMENT_COUNT) {
+    throw new Error(`附件数量超过上限（${MAX_ATTACHMENT_COUNT} 个）`);
+  }
+  const parts = [text];
+  let total = 0;
+  for (const attachment of attachments) {
+    const data = Buffer.from(attachment.dataBase64, 'base64');
+    total += data.byteLength;
+    if (data.byteLength > MAX_ATTACHMENT_BYTES) {
+      throw new Error(`附件 ${attachment.name} 超过单文件大小上限（10 MB）`);
+    }
+    if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+      throw new Error('附件总大小超过上限（30 MB）');
+    }
+    await store.saveAttachment(conversationId, {
+      name: attachment.name,
+      ...(attachment.mediaType ? { mediaType: attachment.mediaType } : {}),
+      data,
+    });
+    if (isTextLike(attachment.name, attachment.mediaType) && data.byteLength <= INLINE_TEXT_BYTES) {
+      parts.push(`\n\n${ATTACHMENT_DELIMITER}${attachment.name} ---\n${data.toString('utf8')}`);
+    } else {
+      parts.push(
+        `\n\n[附件：${attachment.name}${attachment.mediaType ? ` · ${attachment.mediaType}` : ''} · ${data.byteLength} 字节 —— 内容未内联]`,
+      );
+    }
+  }
+  return parts.join('');
+}
+
 /**
  * 会话运行编排（架构设计 §4.1）：历史 + 用户输入 → 框架运行 → 事件流 → 持久化。
  * 宿主不增加步数/时间/费用判断，取消经信号传给框架与模块。
@@ -32,7 +117,11 @@ export class ConversationManager {
     this.#options = options;
   }
 
-  async send(conversationId: string, userText: string): Promise<{ status: TurnStatus }> {
+  async send(
+    conversationId: string,
+    userText: string,
+    attachments: readonly IncomingAttachment[] = [],
+  ): Promise<{ status: TurnStatus; usage?: ConversationUsage }> {
     if (this.#controllers.has(conversationId)) {
       throw new Error('该会话正在运行中');
     }
@@ -41,7 +130,13 @@ export class ConversationManager {
     this.#controllers.set(conversationId, controller);
     try {
       const history = this.#options.store.getMessages(conversationId);
-      const userMessage: ModelMessage = { role: 'user', content: userText };
+      const content = await composeUserContent(
+        conversationId,
+        userText,
+        attachments,
+        this.#options.store,
+      );
+      const userMessage: ModelMessage = { role: 'user', content };
       this.#options.store.appendMessages(conversationId, [userMessage]);
       // 首轮发送后用消息摘要替换默认标题，与 renderer 本地命名规则一致
       const summary = this.#options.store.getConversation(conversationId);
@@ -74,7 +169,7 @@ export class ConversationManager {
       if (outcome.messages.length > 0) {
         this.#options.store.appendMessages(conversationId, outcome.messages);
       }
-      return { status: outcome.status };
+      return { status: outcome.status, ...(outcome.usage ? { usage: outcome.usage } : {}) };
     } finally {
       this.#controllers.delete(conversationId);
     }

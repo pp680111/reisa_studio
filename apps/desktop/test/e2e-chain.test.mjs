@@ -100,8 +100,28 @@ test('端到端：运行时装配 → 测试模块能力调用 → 结果与记�
     },
   });
 
-  const turn = await manager.send(conversation.id, '请把 “hello reisa” 转成大写');
+  const turn = await manager.send(conversation.id, '请把 “hello reisa” 转成大写', [
+    {
+      name: '说明.md',
+      mediaType: 'text/markdown',
+      dataBase64: Buffer.from('# 附件说明\n这是一段随消息提交的文本附件。', 'utf8').toString(
+        'base64',
+      ),
+    },
+  ]);
   assert.equal(turn.status, 'completed');
+
+  // 附件：元数据登记 + 副本落盘 + 文本内容内联进用户消息
+  const attachments = store.listAttachments(conversation.id);
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].name, '说明.md');
+  const userContent = store
+    .getMessages(conversation.id)
+    .filter((m) => m.role === 'user')
+    .map((m) => String(m.content))
+    .join('\n');
+  assert.ok(userContent.includes('--- 附件：说明.md ---'), '用户消息应内联文本附件内容');
+  assert.ok(userContent.includes('这是一段随消息提交的文本附件'));
 
   const toolCall = events.find((e) => e.type === 'tool-call');
   const toolResult = events.find((e) => e.type === 'tool-result');

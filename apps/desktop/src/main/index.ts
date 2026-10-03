@@ -2,14 +2,40 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { testModelConnection } from '@reisa/agent-adapter';
 import { createAppRuntime, type AppRuntime } from '../composition/runtime.ts';
-import { ConversationManager } from './conversation-manager.ts';
+import { ConversationManager, type IncomingAttachment } from './conversation-manager.ts';
 import { ConversationStore } from './conversations/store.ts';
 import { runSmoke } from './smoke.ts';
 
-function createWindow() {
+interface WindowBounds {
+  readonly x?: number;
+  readonly y?: number;
+  readonly width: number;
+  readonly height: number;
+  readonly maximized?: boolean;
+}
+
+async function createWindow() {
+  let bounds: WindowBounds = { width: 1440, height: 940 };
+  try {
+    const saved = (await (
+      await getRuntime()
+    ).runtime.config.get<WindowBounds>('window.bounds')) ?? {
+      width: 1440,
+      height: 940,
+    };
+    if (
+      Number.isFinite(saved.width) &&
+      Number.isFinite(saved.height) &&
+      saved.width >= 480 &&
+      saved.height >= 540
+    ) {
+      bounds = saved;
+    }
+  } catch {
+    // 状态读取失败时用默认尺寸
+  }
   const window = new BrowserWindow({
-    width: 1440,
-    height: 940,
+    ...(bounds.maximized ? { width: 1440, height: 940 } : bounds),
     minWidth: 480,
     minHeight: 540,
     title: 'Reisa Studio',
@@ -22,8 +48,27 @@ function createWindow() {
       sandbox: true,
     },
   });
+  if (bounds.maximized) window.maximize();
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
+  // 关闭时记忆窗口状态（宿主配置）；失败不影响关闭
+  window.on('close', () => {
+    const current = window.getBounds();
+    void (async () => {
+      try {
+        const { runtime } = await getRuntime();
+        await runtime.config.set('window.bounds', {
+          x: current.x,
+          y: current.y,
+          width: current.width,
+          height: current.height,
+          maximized: window.isMaximized(),
+        } satisfies WindowBounds);
+      } catch {
+        /* optional preference */
+      }
+    })();
+  });
   const devUrl = process.env.REISA_DEV_URL;
   if (!app.isPackaged && devUrl === 'http://127.0.0.1:5173') void window.loadURL(devUrl);
   else void window.loadFile(join(__dirname, '../dist/index.html'));
@@ -58,8 +103,15 @@ function getRuntime(): Promise<RuntimeAssembly> {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('reisa/conversations/list', async () =>
-    (await getRuntime()).store.listConversations(),
+  ipcMain.handle(
+    'reisa/conversations/list',
+    async (_event, options?: { limit?: number; offset?: number }) => {
+      const { limit, offset } = options ?? {};
+      return (await getRuntime()).store.listConversations(
+        typeof limit === 'number' ? limit : undefined,
+        typeof offset === 'number' ? offset : 0,
+      );
+    },
   );
   ipcMain.handle('reisa/conversations/create', async (_event, title?: string) =>
     (await getRuntime()).store.createConversation(title),
@@ -73,7 +125,7 @@ function registerIpc(): void {
   );
   ipcMain.handle('reisa/conversations/delete', async (_event, conversationId: string) => {
     (await getRuntime()).manager.cancel(conversationId);
-    (await getRuntime()).store.deleteConversation(conversationId);
+    await (await getRuntime()).store.deleteConversation(conversationId);
     return true;
   });
   ipcMain.handle('reisa/conversations/messages', async (_event, conversationId: string) =>
@@ -84,8 +136,21 @@ function registerIpc(): void {
   );
   ipcMain.handle(
     'reisa/conversation/send',
-    async (_event, payload: { conversationId: string; text: string }) =>
-      (await getRuntime()).manager.send(payload.conversationId, payload.text),
+    async (
+      _event,
+      payload: {
+        conversationId: string;
+        text: string;
+        attachments?: {
+          name: string;
+          mediaType?: string;
+          dataBase64: string;
+        }[];
+      },
+    ) => {
+      const attachments = (payload.attachments ?? []) as IncomingAttachment[];
+      return (await getRuntime()).manager.send(payload.conversationId, payload.text, attachments);
+    },
   );
   ipcMain.handle('reisa/conversation/cancel', async (_event, conversationId: string) => {
     (await getRuntime()).manager.cancel(conversationId);
@@ -174,9 +239,9 @@ void app.whenReady().then(() => {
     void runSmoke();
     return;
   }
-  createWindow();
+  void createWindow();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
 });
 app.on('window-all-closed', () => {

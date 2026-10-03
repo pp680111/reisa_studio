@@ -23,11 +23,18 @@ export interface StartConversationOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface ConversationUsage {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+}
+
 export interface ConversationOutcome {
   readonly status: 'completed' | 'cancelled' | 'error';
   readonly finishReason?: ConversationFinishReason;
   /** 本次运行产生的完整消息（含工具调用与结果），宿主持久化（架构设计 §7.4）。 */
   readonly messages: readonly ModelMessage[];
+  /** 本次运行的整体 token 用量（服务商上报；仅用于展示，不构成任何执行预算）。 */
+  readonly usage?: ConversationUsage;
   readonly error?: string;
 }
 
@@ -55,6 +62,24 @@ interface RunHandle {
   readonly fullStream: AsyncIterable<StreamPart>;
   readonly steps: Promise<readonly { response?: { messages?: readonly unknown[] } }[]>;
   readonly finishReason: Promise<unknown>;
+  readonly totalUsage: Promise<unknown>;
+}
+
+/** 归一化整体用量：服务商/框架版本的字段形态可能不同，取不到的字段留空。 */
+export function normalizeUsage(raw: unknown): ConversationUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const source = raw as {
+    inputTokens?: unknown;
+    outputTokens?: unknown;
+    totalTokens?: unknown;
+  };
+  const inputTokens = (source.inputTokens as { total?: unknown } | undefined)?.total;
+  const outputTokens = (source.outputTokens as { total?: unknown } | undefined)?.total;
+  if (typeof inputTokens !== 'number' && typeof outputTokens !== 'number') return undefined;
+  return {
+    ...(typeof inputTokens === 'number' ? { inputTokens } : {}),
+    ...(typeof outputTokens === 'number' ? { outputTokens } : {}),
+  };
 }
 
 /** startConversation：提交会话、模型、全量工具与调用入口，返回事件流与结果（架构设计 §4.2）。 */
@@ -139,6 +164,7 @@ async function collectOutcome(
   }
 
   let messages: ModelMessage[] = [];
+  let usage: ConversationUsage | undefined;
   let failure: unknown;
   try {
     // v7 语义：result.response.messages 仅含最后一步；完整历史须经 steps 累积（选型文档 §4.1）。
@@ -149,12 +175,28 @@ async function collectOutcome(
   } catch (error) {
     failure = error;
   }
+  try {
+    usage = normalizeUsage(await result.totalUsage);
+  } catch {
+    // 用量不可得（如取消路径）不视为失败
+  }
 
   if (signal.aborted) {
-    return { status: 'cancelled', finishReason: 'abort', messages };
+    return { status: 'cancelled', finishReason: 'abort', messages, ...(usage ? { usage } : {}) };
   }
   if (failure) {
-    return { status: 'error', finishReason, messages, error: describeError(failure) };
+    return {
+      status: 'error',
+      finishReason,
+      messages,
+      ...(usage ? { usage } : {}),
+      error: describeError(failure),
+    };
   }
-  return { status: 'completed', finishReason: finishReason ?? 'stop', messages };
+  return {
+    status: 'completed',
+    finishReason: finishReason ?? 'stop',
+    messages,
+    ...(usage ? { usage } : {}),
+  };
 }

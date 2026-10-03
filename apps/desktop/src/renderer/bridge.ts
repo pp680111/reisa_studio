@@ -58,10 +58,24 @@ export interface ReisaConnectionTest {
   error?: string;
 }
 
+export interface ReisaAttachmentInput {
+  name: string;
+  mediaType?: string;
+  dataBase64: string;
+}
+
+export interface ReisaUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
 export interface ReisaBridge {
   platform: string;
   conversation: {
-    listConversations(): Promise<ReisaConversationSummary[]>;
+    listConversations(options?: {
+      limit?: number;
+      offset?: number;
+    }): Promise<ReisaConversationSummary[]>;
     createConversation(title?: string): Promise<ReisaConversationSummary>;
     renameConversation(conversationId: string, title: string): Promise<boolean>;
     deleteConversation(conversationId: string): Promise<boolean>;
@@ -72,7 +86,8 @@ export interface ReisaBridge {
     send(
       conversationId: string,
       text: string,
-    ): Promise<{ status: 'completed' | 'cancelled' | 'error' }>;
+      attachments?: ReisaAttachmentInput[],
+    ): Promise<{ status: 'completed' | 'cancelled' | 'error'; usage?: ReisaUsage }>;
     cancel(conversationId: string): Promise<boolean>;
     listCapabilities(): Promise<ReisaCapability[]>;
     listModules(): Promise<{ id: string; state: string }[]>;

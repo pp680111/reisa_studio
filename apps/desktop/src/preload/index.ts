@@ -7,7 +7,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 const api = {
   platform: process.platform,
   conversation: {
-    listConversations: () => ipcRenderer.invoke('reisa/conversations/list'),
+    listConversations: (options?: { limit?: number; offset?: number }) =>
+      ipcRenderer.invoke('reisa/conversations/list', options),
     createConversation: (title?: string) => ipcRenderer.invoke('reisa/conversations/create', title),
     renameConversation: (conversationId: string, title: string) =>
       ipcRenderer.invoke('reisa/conversations/rename', { conversationId, title }),
@@ -17,8 +18,11 @@ const api = {
       ipcRenderer.invoke('reisa/conversations/messages', conversationId),
     getToolRecords: (conversationId: string) =>
       ipcRenderer.invoke('reisa/conversations/toolRecords', conversationId),
-    send: (conversationId: string, text: string) =>
-      ipcRenderer.invoke('reisa/conversation/send', { conversationId, text }),
+    send: (
+      conversationId: string,
+      text: string,
+      attachments?: { name: string; mediaType?: string; dataBase64: string }[],
+    ) => ipcRenderer.invoke('reisa/conversation/send', { conversationId, text, attachments }),
     cancel: (conversationId: string) =>
       ipcRenderer.invoke('reisa/conversation/cancel', conversationId),
     listCapabilities: () => ipcRenderer.invoke('reisa/capabilities/list'),

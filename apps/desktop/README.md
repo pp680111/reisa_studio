@@ -22,7 +22,11 @@
 
 renderer 已接入真实 IPC：会话页通过 `src/renderer/bridge.ts` 的类型化桥读写主进程——会话列表/创建/重命名/删除、发送与取消、事件流（文本增量、工具调用与结果）、设置页的模型连接（服务地址 / 模型 ID / API Key，密钥只进凭据存储不回传且经 `safeStorage` 加密）、默认提示词持久化、模块启停（驱动运行层生命周期并保存启用清单）。桥不可用时（浏览器 `pnpm dev` 预览）自动退回本地演示模式，两种模式共用同一套界面。运行中的会话由主进程编排，同会话禁止并发发送；首轮发送后主进程自动把默认标题替换为消息摘要。
 
+会话体验：助手回答以 Markdown 渲染（react-markdown + GFM，CSP 兼容）；附件在真实模式下可用——文本类附件（≤200 KB）内容内联进用户消息随历史保留，其余保存副本到主应用附件目录（`attachments/`，≤10 MB/个、≤30 MB/次，仅登记名称与大小，不进入任何模块数据）；每轮运行后在消息末尾展示服务商上报的 token 用量（仅展示，不构成预算）；侧栏支持会话搜索、双击/按钮重命名、分页加载更多；窗口位置与大小由宿主记忆并在下次启动还原。
+
 `scripts/real-model-test.mjs`：真实模型端到端验证（已用 DeepSeek OpenAI 兼容端点验证通过）。复制用户基础配置到临时目录隔离运行，注册内联 echo 测试模块后发起一轮真实会话，验证连接、真实工具调用与持久化。用法：`node scripts/real-model-test.mjs <userData 路径>`。
+
+打包分发：`pnpm dist` 产出安装包（Windows NSIS / macOS DMG / Linux AppImage，配置见 `electron-builder.yml`）。运行层由 esbuild/vite 完全打包，生产依赖为空，安装包只携带 `dist` 与 `dist-electron`；`pnpm --filter @reisa/desktop dist:dir` 可产出未压缩目录用于快速验证。当前未配置应用图标与代码签名。
 
 使用仓库根目录的 `pnpm dev` 预览，`pnpm dev:desktop` 打开桌面开发窗口；`pnpm build` 后可用 `pnpm start` 启动生产构建，`pnpm test:desktop` 运行 Electron 冒烟。
 

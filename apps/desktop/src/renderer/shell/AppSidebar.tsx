@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { ModuleContribution } from '@reisa/module-sdk';
 import { Icon, IconButton } from '@reisa/ui';
 import type { Conversation } from '../conversation/ConversationView';
@@ -13,7 +13,10 @@ export function AppSidebar({
   activeConversationId,
   navigate,
   newConversation,
+  renameConversation,
   deleteConversation,
+  loadMoreConversations,
+  canLoadMore,
   openQuickSwitch,
   pinned,
   togglePin,
@@ -26,7 +29,10 @@ export function AppSidebar({
   activeConversationId: string;
   navigate: (route: string, conversationId?: string) => void;
   newConversation: () => void;
+  renameConversation?: (id: string, title: string) => void;
   deleteConversation?: (id: string) => void;
+  loadMoreConversations?: () => void;
+  canLoadMore?: boolean;
   openQuickSwitch: () => void;
   pinned: readonly string[];
   togglePin: (id: string) => void;
@@ -34,6 +40,9 @@ export function AppSidebar({
 }) {
   const [workspaceOpen, setWorkspaceOpen] = usePreference('workspaceOpen', true, isBoolean);
   const [recentOpen, setRecentOpen] = usePreference('recentOpen', true, isBoolean);
+  const [recentQuery, setRecentQuery] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
   const scrolling = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     try {
@@ -169,33 +178,100 @@ export function AppSidebar({
               <span>最近会话</span>
               <Icon name={recentOpen ? 'chevronDown' : 'chevronRight'} size={13} />
             </button>
+            {recentOpen && conversations.length > 0 && (
+              <div className="recent-search">
+                <Icon name="search" size={13} />
+                <input
+                  value={recentQuery}
+                  onChange={(e) => setRecentQuery(e.target.value)}
+                  aria-label="搜索会话"
+                  placeholder="搜索会话…"
+                />
+              </div>
+            )}
             {recentOpen &&
-              conversations.map((conversation) => (
-                <div className="module-nav-row" key={conversation.id}>
-                  <button
-                    className={`recent-item ${route === 'conversation' && activeConversationId === conversation.id ? 'active' : ''}`}
-                    aria-current={
-                      route === 'conversation' && activeConversationId === conversation.id
-                        ? 'page'
-                        : undefined
-                    }
-                    onClick={() => navigate('conversation', conversation.id)}
-                    title={conversation.title}
-                  >
-                    <Icon name="chat" size={14} />
-                    <span>{conversation.title}</span>
-                  </button>
-                  {deleteConversation && (
-                    <div className="nav-row-actions">
-                      <IconButton
-                        name="close"
-                        label={`删除会话 ${conversation.title}`}
-                        onClick={() => deleteConversation(conversation.id)}
+              conversations
+                .filter((conversation) =>
+                  conversation.title.toLocaleLowerCase().includes(recentQuery.toLocaleLowerCase()),
+                )
+                .map((conversation) => (
+                  <div className="module-nav-row" key={conversation.id}>
+                    {editingId === conversation.id ? (
+                      <input
+                        className="recent-rename"
+                        value={editingTitle}
+                        autoFocus
+                        aria-label="会话名称"
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onBlur={() => {
+                          const title = editingTitle.trim();
+                          if (title && renameConversation)
+                            renameConversation(conversation.id, title);
+                          setEditingId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') setEditingId(null);
+                          if (
+                            e.key === 'Enter' &&
+                            !e.nativeEvent.isComposing &&
+                            e.keyCode !== 229
+                          ) {
+                            e.currentTarget.blur();
+                          }
+                        }}
                       />
-                    </div>
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      <button
+                        className={`recent-item ${route === 'conversation' && activeConversationId === conversation.id ? 'active' : ''}`}
+                        aria-current={
+                          route === 'conversation' && activeConversationId === conversation.id
+                            ? 'page'
+                            : undefined
+                        }
+                        onDoubleClick={() => {
+                          if (!renameConversation) return;
+                          setEditingId(conversation.id);
+                          setEditingTitle(conversation.title);
+                        }}
+                        onClick={() => navigate('conversation', conversation.id)}
+                        title={conversation.title}
+                      >
+                        <Icon name="chat" size={14} />
+                        <span>{conversation.title}</span>
+                      </button>
+                    )}
+                    {(renameConversation || deleteConversation) && (
+                      <div className="nav-row-actions">
+                        {renameConversation && editingId !== conversation.id && (
+                          <IconButton
+                            name="edit"
+                            label={`重命名会话 ${conversation.title}`}
+                            onClick={() => {
+                              setEditingId(conversation.id);
+                              setEditingTitle(conversation.title);
+                            }}
+                          />
+                        )}
+                        {deleteConversation && (
+                          <IconButton
+                            name="close"
+                            label={`删除会话 ${conversation.title}`}
+                            onClick={() => deleteConversation(conversation.id)}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+            {recentOpen && recentQuery && conversations.length > 0 && (
+              <p className="empty-search">没有匹配的会话</p>
+            )}
+            {recentOpen && canLoadMore && loadMoreConversations && (
+              <button className="load-more" onClick={loadMoreConversations}>
+                加载更多会话
+                <Icon name="chevronDown" size={13} />
+              </button>
+            )}
           </div>
         )}
       </div>

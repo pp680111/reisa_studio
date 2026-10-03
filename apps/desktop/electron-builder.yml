@@ -1,0 +1,27 @@
+# electron-builder 打包配置：运行层已由 esbuild/vite 完全打包进 dist 与 dist-electron，
+# 生产依赖为空，安装包只携带构建产物，不含 node_modules。
+appId: studio.reisa.app
+productName: Reisa Studio
+directories:
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-Setup-${version}.${ext}
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity
+linux:
+  target:
+    - AppImage
+  category: Utility
