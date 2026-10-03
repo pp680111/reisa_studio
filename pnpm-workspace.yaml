@@ -6,6 +6,10 @@ allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+  # 以下为 @lancedb/lancedb 可选依赖（本地 embedding 组件）的构建脚本，知识库模块不使用
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false
 minimumReleaseAgeExclude:
   - '@ai-sdk/gateway@4.0.103'
   - ai@7.0.127

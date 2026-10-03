@@ -1,0 +1,26 @@
+{
+  "name": "@reisa/module-knowledge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "知识库模块：本地文档来源的增量索引与混合检索（迁移自 simple-knowledge-base）",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./runtime": "./runtime/index.ts"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.39.0",
+    "@reisa/module-sdk": "workspace:*",
+    "@reisa/ui": "workspace:*",
+    "@sinclair/typebox": "^0.34.52",
+    "apache-arrow": "^18.1.0",
+    "chokidar": "^4.0.3",
+    "ignore": "^7.0.5",
+    "openai": "^4.104.0",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@reisa/module-host": "workspace:*",
+    "@types/react": "^19.0.0"
+  }
+}

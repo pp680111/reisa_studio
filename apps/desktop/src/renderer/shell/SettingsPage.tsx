@@ -294,24 +294,32 @@ export function SettingsPage({
         </section>
         <section className="settings-content" hidden={section !== '模块设置'}>
           <h2>模块设置</h2>
-          <p className="muted">设置由所属模块定义和管理。</p>
+          <p className="muted">
+            每个模块在此维护自己的独有配置（迁移设计文档 §8.2）；配置数据保存在模块私有存储中。
+          </p>
+          {modules.filter((module) => enabled.includes(module.id) && module.settings).length ===
+          0 ? (
+            <p className="muted">当前没有提供配置的已启用模块。</p>
+          ) : null}
           {modules
             .filter((module) => enabled.includes(module.id) && module.settings)
-            .map((module) => (
-              <div className="module-setting-row" key={module.id}>
-                <span className="module-symbol">
-                  <Icon name={module.navigation?.icon ?? 'layers'} />
-                </span>
-                <div>
-                  <strong>{module.name}</strong>
-                  <p>{module.description}</p>
+            .map((module) => {
+              const Settings = module.settings;
+              return (
+                <div className="setting-block" key={module.id}>
+                  <div className="setting-row">
+                    <span className="module-symbol">
+                      <Icon name={module.navigation?.icon ?? 'layers'} />
+                    </span>
+                    <div>
+                      <strong>{module.name}</strong>
+                      <p>{module.description}</p>
+                    </div>
+                  </div>
+                  {Settings && <Settings notify={notify} />}
                 </div>
-                <Button onClick={() => openModuleSettings(module.id)}>
-                  设置
-                  <Icon name="arrowRight" size={14} />
-                </Button>
-              </div>
-            ))}
+              );
+            })}
         </section>
       </div>
     </div>

@@ -78,13 +78,22 @@ test('端到端：运行时装配 → 测试模块能力调用 → 结果与记�
   const userData = await mkdtemp(join(tmpdir(), 'reisa-e2e-'));
   const runtime = await createAppRuntime(userData);
 
-  // 仓库当前不包含功能模块；运行时装配本身应正常完成
+  // 组合根已接入知识库运行模块：能力集合 = 内置知识库能力 + 测试夹具模块
   runtime.host.register(createTesterModule());
   await runtime.host.activate('tester');
   assert.equal(runtime.host.getState('tester'), 'active');
   assert.deepEqual(
-    runtime.host.listEnabledCapabilities().map((c) => c.id),
-    ['tester/upper'],
+    runtime.host
+      .listEnabledCapabilities()
+      .map((c) => c.id)
+      .sort(),
+    [
+      'knowledge/list_documents',
+      'knowledge/read_document',
+      'knowledge/search',
+      'knowledge/upload_document',
+      'tester/upper',
+    ],
   );
 
   const store = await ConversationStore.open(runtime.layout.conversationsDb);

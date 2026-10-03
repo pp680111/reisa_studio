@@ -1,0 +1,150 @@
+.knowledge-settings {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.knowledge-settings-body {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.knowledge-settings-section {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-secondary);
+}
+
+.knowledge-settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.knowledge-settings-section-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.knowledge-settings-section-header h3 svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.knowledge-settings-description {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.knowledge-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.knowledge-settings-grid .field {
+  gap: 6px;
+  margin: 0;
+}
+
+.knowledge-settings-grid .field small {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-settings-grid input {
+  height: 40px;
+  padding: 9px 11px;
+}
+
+.knowledge-settings-number {
+  position: relative;
+}
+
+.knowledge-settings-number input {
+  padding-right: 56px;
+}
+
+.knowledge-settings-number > span {
+  position: absolute;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--faint);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.knowledge-settings-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  z-index: 1;
+}
+
+.knowledge-settings-footer p {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.knowledge-settings-footer p svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.knowledge-settings-footer .button {
+  flex-shrink: 0;
+}
+
+.knowledge-settings-state {
+  margin: 0;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@container (max-width: 520px) {
+  .knowledge-settings-body {
+    padding: 18px;
+    gap: 14px;
+  }
+
+  .knowledge-settings-section {
+    padding: 16px;
+  }
+
+  .knowledge-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .knowledge-settings-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 18px;
+  }
+}

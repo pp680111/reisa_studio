@@ -69,6 +69,12 @@ export interface ReisaUsage {
   outputTokens?: number;
 }
 
+export interface ReisaModulePageResult<T> {
+  ok: boolean;
+  value?: T;
+  error?: { code: string; message: string };
+}
+
 export interface ReisaBridge {
   platform: string;
   conversation: {
@@ -107,6 +113,20 @@ export interface ReisaBridge {
     testConnection(): Promise<ReisaConnectionTest>;
     getPrompt(): Promise<string>;
     setPrompt(prompt: string): Promise<boolean>;
+  };
+  /** 模块页面服务：仅能调用已激活模块声明的页面操作（管理面，不进 Agent 能力）。 */
+  modulePage: {
+    invoke<T = unknown>(
+      moduleId: string,
+      action: string,
+      input?: unknown,
+    ): Promise<ReisaModulePageResult<T>>;
+    pickPath(mode: 'directory' | 'file'): Promise<string | null>;
+  };
+  /** 模块私有配置（模块自己的 settings.json，与 ModuleConfigScope 同一存储）。 */
+  moduleConfig: {
+    get<T = unknown>(moduleId: string, key: string): Promise<T | null>;
+    set(moduleId: string, key: string, value: unknown): Promise<boolean>;
   };
 }
 

@@ -1,7 +1,12 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { testModelConnection } from '@reisa/agent-adapter';
-import { createAppRuntime, type AppRuntime } from '../composition/runtime.ts';
+import {
+  createAppRuntime,
+  getModuleConfigScope,
+  getModulePageService,
+  type AppRuntime,
+} from '../composition/runtime.ts';
 import { ConversationManager, type IncomingAttachment } from './conversation-manager.ts';
 import { ConversationStore } from './conversations/store.ts';
 import { runSmoke } from './smoke.ts';
@@ -231,6 +236,71 @@ function registerIpc(): void {
     (await getRuntime()).runtime.config.set('agent.systemPrompt', prompt);
     return true;
   });
+
+  // 模块页面服务（迁移设计文档 §8.1）：受限通道，仅允许调用已激活模块声明的页面操作；
+  // 管理面操作只经此通道，不进入 Agent 能力集合（知识库 §5.3 安全分层）。
+  ipcMain.handle(
+    'reisa/module/page',
+    async (_event, payload: { moduleId: string; action: string; input?: unknown }) => {
+      const { runtime } = await getRuntime();
+      if (runtime.host.getState(payload.moduleId) !== 'active') {
+        return {
+          ok: false as const,
+          error: { code: 'CAPABILITY_UNAVAILABLE', message: '模块未激活' },
+        };
+      }
+      const service = getModulePageService(payload.moduleId);
+      if (service === undefined) {
+        return {
+          ok: false as const,
+          error: { code: 'CAPABILITY_UNAVAILABLE', message: '模块未提供页面服务' },
+        };
+      }
+      try {
+        const value = await service(payload.action, (payload.input ?? {}) as never);
+        return { ok: true as const, value };
+      } catch (error) {
+        return {
+          ok: false as const,
+          error: {
+            code: 'EXECUTION_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    },
+  );
+
+  // 模块私有配置读写（reisa/module/config）：句柄由组合根登记，仅限本模块 settings.json。
+  ipcMain.handle(
+    'reisa/module/config/get',
+    async (_event, payload: { moduleId: string; key: string }) => {
+      const scope = getModuleConfigScope(payload.moduleId);
+      if (scope === undefined) return null;
+      return (await scope.get(payload.key)) ?? null;
+    },
+  );
+  ipcMain.handle(
+    'reisa/module/config/set',
+    async (_event, payload: { moduleId: string; key: string; value: unknown }) => {
+      const scope = getModuleConfigScope(payload.moduleId);
+      if (scope === undefined) return false;
+      await scope.set(payload.key, payload.value as never);
+      return true;
+    },
+  );
+
+  // 宿主目录/文件选择对话框（模块页面经受限通道触发，添加本地来源用）。
+  ipcMain.handle(
+    'reisa/module/pickPath',
+    async (_event, payload: { mode: 'directory' | 'file' }) => {
+      const result = await dialog.showOpenDialog({
+        properties: [payload.mode === 'directory' ? 'openDirectory' : 'openFile'],
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0] ?? null;
+    },
+  );
 }
 
 void app.whenReady().then(() => {

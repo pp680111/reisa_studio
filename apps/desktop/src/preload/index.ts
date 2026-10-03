@@ -44,6 +44,18 @@ const api = {
     getPrompt: () => ipcRenderer.invoke('reisa/settings/getPrompt'),
     setPrompt: (prompt: string) => ipcRenderer.invoke('reisa/settings/setPrompt', prompt),
   },
+  // 模块页面服务与私有配置（迁移设计文档 §8.1）：受限通道，action 白名单在主进程校验
+  modulePage: {
+    invoke: (moduleId: string, action: string, input?: unknown) =>
+      ipcRenderer.invoke('reisa/module/page', { moduleId, action, input }),
+    pickPath: (mode: 'directory' | 'file') => ipcRenderer.invoke('reisa/module/pickPath', { mode }),
+  },
+  moduleConfig: {
+    get: (moduleId: string, key: string) =>
+      ipcRenderer.invoke('reisa/module/config/get', { moduleId, key }),
+    set: (moduleId: string, key: string, value: unknown) =>
+      ipcRenderer.invoke('reisa/module/config/set', { moduleId, key, value }),
+  },
 };
 
 contextBridge.exposeInMainWorld('reisa', Object.freeze(api));

@@ -11,6 +11,8 @@ export interface ModulePageProps {
 
 export interface ModuleSettingsProps {
   notify: (message: string) => void;
+  /** 请求宿主关闭设置界面。宿主以弹窗展示时会响应；内嵌展示时可能不提供。 */
+  close?: () => void;
 }
 
 /** Only data explicitly returned by a capability; an ID does not grant access to private files. */

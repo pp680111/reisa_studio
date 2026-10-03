@@ -12,7 +12,9 @@ import {
 } from '@reisa/foundation';
 import { ModuleHost } from '@reisa/module-host';
 import { createOpenAICompatibleModel, type ProviderConnectionConfig } from '@reisa/agent-adapter';
+import type { JsonValue, ModuleConfigScope } from '@reisa/module-sdk';
 import type { LanguageModel } from 'ai';
+import { createKnowledgeRuntime } from '@reisa/module-knowledge/runtime';
 
 // Electron 主进程内为 safeStorage API；纯 Node（测试）下 electron 包导出二进制路径，无此 API
 const safeStorage = (
@@ -54,11 +56,41 @@ export interface AppRuntime {
 }
 
 /**
- * 内置运行模块清单——组合根是宿主唯一导入模块运行入口的位置（架构设计 §11）。
- * 当前仓库按规划未包含功能模块；将来接入时在此导入模块包的 runtime 入口并加入清单，
- * 宿主的激活、启停 IPC 与全量能力集合会自动生效。
+ * 模块页面服务与配置句柄注册表（迁移设计文档 §8.1）：
+ * 受限 IPC（reisa/module/page、reisa/module/config）经此访问模块提供的
+ * 页面服务与私有配置；仅主进程可达，renderer 不能绕过。
  */
-const RUNTIME_MODULE_FACTORIES: readonly (() => Parameters<ModuleHost['register']>[0])[] = [];
+export type ModulePageServiceInvoke = (action: string, input: JsonValue) => Promise<JsonValue>;
+
+const modulePageServices = new Map<string, ModulePageServiceInvoke>();
+const moduleConfigScopes = new Map<string, ModuleConfigScope>();
+
+export function getModulePageService(moduleId: string): ModulePageServiceInvoke | undefined {
+  return modulePageServices.get(moduleId);
+}
+
+export function getModuleConfigScope(moduleId: string): ModuleConfigScope | undefined {
+  return moduleConfigScopes.get(moduleId);
+}
+
+/**
+ * 内置运行模块清单——组合根是宿主唯一导入模块运行入口的位置（架构设计 §11）。
+ * 新模块接入：在此加入条目并把 UI 贡献加入 modules.ts，宿主其余代码零改动。
+ */
+const RUNTIME_MODULES: readonly {
+  readonly id: string;
+  readonly create: () => Parameters<ModuleHost['register']>[0];
+}[] = [
+  {
+    id: 'knowledge',
+    create: () =>
+      createKnowledgeRuntime({
+        registerPageService: (invoke) => {
+          modulePageServices.set('knowledge', invoke);
+        },
+      }),
+  },
+];
 
 interface ModelConnectionSettings {
   readonly baseURL?: string;
@@ -76,15 +108,19 @@ export async function createAppRuntime(userDataPath: string): Promise<AppRuntime
 
   const host = new ModuleHost({
     storageRoot: layout.modulesDir,
-    servicesFactory: (moduleId) => createNodeModuleServices(layout.modulesDir, moduleId),
+    servicesFactory: async (moduleId) => {
+      const services = await createNodeModuleServices(layout.modulesDir, moduleId);
+      moduleConfigScopes.set(moduleId, services.config);
+      return services;
+    },
   });
 
   // 启用状态属于宿主自身配置（架构设计 §8.1）；未配置时默认启用内置运行模块。
   const enabled =
     (await config.get<string[]>('enabledModules')) ??
-    RUNTIME_MODULE_FACTORIES.map((factory) => factory().id);
-  for (const factory of RUNTIME_MODULE_FACTORIES) {
-    const module = factory();
+    RUNTIME_MODULES.map((entry) => entry.create().id);
+  for (const entry of RUNTIME_MODULES) {
+    const module = entry.create();
     host.register(module);
     if (enabled.includes(module.id)) {
       try {

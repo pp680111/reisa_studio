@@ -1,5 +1,8 @@
-# electron-builder 打包配置：运行层已由 esbuild/vite 完全打包进 dist 与 dist-electron，
-# 生产依赖为空，安装包只携带构建产物，不含 node_modules。
+# electron-builder 打包配置。
+# 运行层由 esbuild/vite 打包进 dist 与 dist-electron；唯一例外是原生依赖
+# @lancedb/lancedb（知识库模块的向量/全文索引，napi 预编译）与 apache-arrow：
+# esbuild 将其保持为外部 require（scripts/build-electron.mjs），安装包必须携带
+# 其运行时 node_modules 子集，并把 .node 原生库解包到 asar 外（asar 内无法加载）。
 appId: studio.reisa.app
 productName: Reisa Studio
 directories:
@@ -8,6 +11,10 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
+  - node_modules/@lancedb/**/*
+  - node_modules/apache-arrow/**/*
+asarUnpack:
+  - "**/*.node"
 win:
   target:
     - target: nsis

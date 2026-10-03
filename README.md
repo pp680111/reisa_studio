@@ -2,7 +2,7 @@
 
 以 Agent 会话为主入口，通过独立功能模块扩展能力的 AI 聚合应用。
 
-当前状态：主应用（宿主）运行层已完整实现并通过真实模型验证——Electron 桌面入口、会话与流式事件（Markdown 渲染、附件、token 用量展示）、模型连接配置（含凭据加密）、会话持久化（搜索/重命名/分页）、窗口状态记忆、模块生命周期与能力调用入口、依赖边界检查；`pnpm dist` 可产出安装包。功能模块当前未包含（`modules/` 目录按规划预留为空，此前原型的四个模块界面已移除，代码可在 git 历史 93577ee 找回）；模块接入协议与宿主侧全部机制已就绪，新增模块无需修改宿主代码。
+当前状态：主应用（宿主）运行层已完整实现并通过真实模型验证——Electron 桌面入口、会话与流式事件（Markdown 渲染、附件、token 用量展示）、模型连接配置（含凭据加密）、会话持久化（搜索/重命名/分页）、窗口状态记忆、模块生命周期与能力调用入口、依赖边界检查；`pnpm dist` 可产出安装包。首个功能模块"知识库"已接入（`modules/knowledge/`，迁移自 simple-knowledge-base，含来源管理、增量索引、混合检索与 Agent 能力）；新增模块无需修改宿主代码。
 
 ## 开始使用
 
@@ -30,6 +30,7 @@ pnpm format:check    # 代码格式检查
 - [界面设计](docs/ui-design.md)：会话优先布局、模块管理、独立工作区、设置、结果展示和交互规范。
 - [独立模块工作空间](docs/module-ui-design.md)：知识库、绘图、项目和翻译的直接操作界面与交互。
 - [Agent 框架选型](docs/agent-framework-selection.md)：候选框架对比、AI SDK 推荐理由、接入要点与 spike 验收清单。
+- [知识库模块迁移设计](docs/knowledge-base-migration.md)：simple-knowledge-base 源码分析（行为规格基准）与模块化迁移方案、映射表、实施阶段。
 
 核心约定：主应用把全部已启用模块的公开能力交给 Agent 框架；框架负责会话及工具调用循环；主应用和模块的数据分别管理，跨边界访问只能通过明确公开的能力接口。
 
@@ -53,7 +54,11 @@ packages/
   foundation/                  基础配置、凭据、平台及作用域存储机制（@reisa/foundation）
   ui/                          共享 UI 组件与设计 Token（@reisa/ui）
 
-modules/                       预留目录（workspace 已包含；当前未包含任何功能模块）
+modules/                       功能模块（首个模块：知识库 @reisa/module-knowledge）
+  knowledge/                   文档来源管理与混合检索（迁移自 simple-knowledge-base）
+    manifest.ts / contracts.ts 模块贡献清单与能力契约（TypeBox Schema）
+    runtime/                   主进程运行层：同步对账、LanceDB 索引、SQLite 元数据
+    ui/                        来源 / 文档 / 检索测试工作区与模块设置
 ```
 
 各目录的职责与边界写在对应包的 README 中。
@@ -73,8 +78,8 @@ modules/                       预留目录（workspace 已包含；当前未包
 
 - [Agent 框架选型](docs/agent-framework-selection.md) 已确认（AI SDK v7 + TypeBox），`agent-adapter` 已实现；真实模型（DeepSeek OpenAI 兼容端点）端到端验证通过（§14.1 第 1 步）。
 - `module-host`（生命周期/注册中心/调用入口）、`foundation`（布局/配置/凭据，驱动选型 `node:sqlite`）、会话持久化（`conversations.sqlite`）、组合根运行时激活、受限 IPC 与 renderer 真实接入均已完成（§14.1 第 2 步）。
-- 功能模块当前按规划不实现；宿主侧协议与机制已就绪，模块可在不动宿主代码的情况下接入（§14.1 第 3 步的验证以内联测试模块完成）。
-- 待办备选：凭据加密的 `safeStorage` 已接入（历史明文重存后自动升级）；会话消息 Markdown 渲染、会话搜索/分页等待定。
+- 功能模块：知识库（`modules/knowledge/`）已接入运行时——来源管理、后台增量索引（LanceDB 混合检索 + SQLite 元数据）、四个 Agent 能力（search / list_documents / read_document / upload_document）与模块工作区页面；接入方式见 [知识库模块迁移设计](docs/knowledge-base-migration.md)。宿主侧新增通用"模块页面服务 / 模块配置"受限 IPC 通道与设置页内嵌模块配置区。
+- 待办备选：凭据加密的 `safeStorage` 已接入（历史明文重存后自动升级）；会话消息 Markdown 渲染、会话搜索/分页待定。
 - 文档解析与索引、绘图生成与导出、项目保存及翻译服务。
 - 数据库、文件读写、配置持久化与受限 IPC 业务接口。
 - 运行期数据目录 `app-data/`（架构设计 §7.2）：属运行产物，已加入 `.gitignore`，不入库。

@@ -50,9 +50,13 @@ async function visit(directory) {
         );
       if (file.startsWith('modules/')) {
         const owner = file.split('/')[1];
+        // 模块测试允许引用 module-host（端到端装配验证）；运行时代码仍只能依赖 SDK 与自身
+        const allowedShared = file.includes('/test/')
+          ? ['@reisa/module-sdk', '@reisa/module-host']
+          : ['@reisa/module-sdk'];
         if (
           (dependency.startsWith('@reisa/module-') &&
-            dependency !== '@reisa/module-sdk' &&
+            !allowedShared.includes(dependency) &&
             dependency !== `@reisa/module-${owner}`) ||
           (target.startsWith('modules/') && !target.startsWith(`modules/${owner}/`))
         )

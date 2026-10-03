@@ -14,11 +14,15 @@
     "dist": "electron-builder",
     "dist:dir": "electron-builder --dir"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@lancedb/lancedb": "^0.39.0",
+    "apache-arrow": "^18.1.0"
+  },
   "devDependencies": {
     "@reisa/agent-adapter": "workspace:*",
     "@reisa/foundation": "workspace:*",
     "@reisa/module-host": "workspace:*",
+    "@reisa/module-knowledge": "workspace:*",
     "@reisa/module-sdk": "workspace:*",
     "@reisa/ui": "workspace:*",
     "@sinclair/typebox": "^0.34.52",

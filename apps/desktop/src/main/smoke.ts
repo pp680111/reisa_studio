@@ -79,11 +79,29 @@ export async function runSmoke(): Promise<void> {
       'window.reisa.conversation.listConversations()',
     );
     assert.ok(Array.isArray(conversations), '会话列表 IPC 应返回数组');
-    // 仓库当前未包含功能模块：能力集合为空，但通道与运行层装配必须可用
-    const capabilityIds = await window.webContents.executeJavaScript(
+    // 内置知识库模块随运行时激活：能力集合应包含其四个公开能力
+    const capabilityIds = (await window.webContents.executeJavaScript(
       'window.reisa.conversation.listCapabilities().then((list) => list.map((c) => c.id))',
+    )) as string[];
+    assert.ok(
+      capabilityIds.includes('knowledge/search') &&
+        capabilityIds.includes('knowledge/list_documents') &&
+        capabilityIds.includes('knowledge/read_document') &&
+        capabilityIds.includes('knowledge/upload_document'),
+      `知识库能力应已注册，实际：${JSON.stringify(capabilityIds)}`,
     );
-    assert.deepEqual(capabilityIds, [], '未包含模块时能力集合应为空');
+    // 模块页面服务通道：已激活模块可调用，未激活模块被拒
+    const pageOk = (await window.webContents.executeJavaScript(
+      "window.reisa.modulePage.invoke('knowledge', 'get_sync_status')",
+    )) as { ok: boolean };
+    assert.equal(pageOk.ok, true, '知识库页面服务应可用');
+    const moduleStates = (await window.webContents.executeJavaScript(
+      'window.reisa.conversation.listModules()',
+    )) as { id: string; state: string }[];
+    assert.ok(
+      moduleStates.some((module) => module.id === 'knowledge' && module.state === 'active'),
+      '知识库模块应处于激活状态',
+    );
 
     assert.deepEqual(errors, []);
     console.log(
