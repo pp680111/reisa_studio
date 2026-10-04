@@ -30,6 +30,7 @@ export const PAGE_ACTIONS = {
   initializeSyncWorkspace: 'initialize_sync_workspace',
   cloneSyncRepository: 'clone_sync_repository',
   syncNow: 'sync_now',
+  saveSyncConnection: 'save_sync_connection',
   saveSyncAuto: 'save_sync_auto',
   listTags: 'list_tags',
   getNoteTags: 'get_note_tags',

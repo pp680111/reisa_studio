@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, EmptyState, IconButton } from '@reisa/ui';
+import { Button, EmptyState, Icon, IconButton, PageHeading } from '@reisa/ui';
 import { deleteTag, ensureTag, errorMessage, listTags, renameTag, type TagJson } from './client.ts';
 import { PromptDialog } from './PromptDialog.tsx';
 
@@ -18,16 +18,23 @@ export function TagsView({
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<TagJson | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setTags(await listTags());
-    } catch (error) {
-      notify(errorMessage(error));
-    }
-  }, [notify]);
+  const refresh = useCallback(
+    async (options?: { silent?: boolean }) => {
+      try {
+        setTags(await listTags());
+      } catch (error) {
+        if (options?.silent !== true) notify(errorMessage(error));
+      }
+    },
+    [notify],
+  );
 
+  // Q5 刷新策略：操作后主动刷新 + 5 秒轮询；轮询承接页面外变更（克隆/同步导入、
+  // 后台自动同步），失败时静默保留当前数据，避免错误提示重复弹出。
   useEffect(() => {
     void refresh();
+    const timer = setInterval(() => void refresh({ silent: true }), 5000);
+    return () => clearInterval(timer);
   }, [refresh]);
 
   const handleCreate = async (name: string) => {
@@ -66,15 +73,16 @@ export function TagsView({
         <Button variant="ghost" onClick={onBack}>
           ← 返回书籍
         </Button>
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          新建标签
-        </Button>
       </div>
 
-      <div className="card-note-section-heading">
-        <h1>标签管理</h1>
-        <p>标签库在全部书籍之间共享；大小写与首尾空格差异不会创建重复标签。</p>
-      </div>
+      <PageHeading eyebrow="整理与分类" title="标签管理">
+        <Button variant="primary" onClick={() => setCreating(true)}>
+          <Icon name="plus" size={16} /> 新建标签
+        </Button>
+      </PageHeading>
+      <p className="card-note-result-count" role="status">
+        {tags === null ? '正在加载标签…' : `共 ${tags.length} 个标签`}
+      </p>
 
       {tags !== null && tags.length === 0 && (
         <EmptyState

@@ -206,7 +206,7 @@ export function NoteEditorView({
   };
 
   const handleSave = async () => {
-    if (busy) return;
+    if (busy || snapshot === null) return;
     try {
       const trimmedQuote = validateQuote(quote);
       let pageStart: number | null = null;
@@ -323,7 +323,15 @@ export function NoteEditorView({
   };
 
   return (
-    <div className="card-note-view">
+    <div
+      className="card-note-view card-note-editor-view"
+      onKeyDown={(event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+          event.preventDefault();
+          if (!event.nativeEvent.isComposing && quote.trim() !== '') void handleSave();
+        }
+      }}
+    >
       <div className="card-note-toolbar">
         <Button variant="ghost" onClick={handleBack}>
           ← 返回{bookTitle === null ? '' : `「${bookTitle}」`}
@@ -340,194 +348,223 @@ export function NoteEditorView({
 
       <div className="card-note-section-heading">
         <h1>{noteId === null ? '新建笔记' : '编辑笔记'}</h1>
-        <p>保存于「{bookTitle ?? '…'}」；每次保存都会生成新的内容版本。</p>
+        <p>摘录值得记住的文字，写下此刻的想法。</p>
       </div>
 
       <div className="card-note-editor">
-        <div className="card-note-quote-tools">
-          <div className="card-note-markdown-toolbar" aria-label="Markdown 工具栏">
-            {MARKDOWN_TOOLBAR.map((item) => (
-              <IconButton
-                key={item.label}
-                name={item.icon}
-                label={item.label}
-                disabled={quoteMode !== '编辑'}
-                onClick={() => insertMarkdown(item.prefix, item.suffix, item.placeholder)}
-              />
-            ))}
+        <div className="card-note-editor-main">
+          <div className="card-note-editor-section-title">
+            <strong>原文摘录</strong>
+            <span>支持 Markdown 与公式</span>
           </div>
-          <div className="card-note-quote-tabs" role="tablist" aria-label="原文视图">
-            <button
-              type="button"
-              className={quoteMode === '编辑' ? 'active' : ''}
-              aria-pressed={quoteMode === '编辑'}
-              onClick={() => setQuoteMode('编辑')}
-            >
-              编辑
-            </button>
-            <button
-              type="button"
-              className={quoteMode === '预览' ? 'active' : ''}
-              aria-pressed={quoteMode === '预览'}
-              onClick={() => setQuoteMode('预览')}
-            >
-              预览
-            </button>
-          </div>
-        </div>
-
-        {quoteMode === '编辑' ? (
-          <textarea
-            ref={quoteRef}
-            className="card-note-quote-input"
-            rows={9}
-            value={quote}
-            placeholder="粘贴或输入书籍原文（支持 Markdown 与 LaTeX 公式）…"
-            onPaste={handleQuotePaste}
-            onChange={(event) => setQuote(event.target.value)}
-          />
-        ) : (
-          <div className="card-note-quote-preview">
-            {quote.trim() === '' ? (
-              <EmptyState
-                icon="document"
-                title="暂无内容"
-                description="原文为空，切回编辑模式填写。"
-              />
-            ) : (
-              <MarkdownPreview source={quote} />
-            )}
-          </div>
-        )}
-
-        <div className="card-note-attachments">
-          <div className="card-note-attachments-heading">
-            <span>图片附件（可选，随保存写入）</span>
-            <Button onClick={() => void handlePickAttachments()}>
-              <Icon name="image" size={15} />
-              添加图片
-            </Button>
-          </div>
-          {attachments.length > 0 && (
-            <ul className="card-note-attachment-list">
-              {attachments.map((draft, index) => (
-                <li key={draft.id}>
-                  {draft.previewDataUrl !== null ? (
-                    <img
-                      src={draft.previewDataUrl}
-                      alt={draft.name}
-                      className="card-note-attachment-thumb"
-                    />
-                  ) : (
-                    <span className="card-note-attachment-thumb card-note-attachment-fallback">
-                      <Icon name="image" size={18} />
-                    </span>
-                  )}
-                  <div className="card-note-attachment-meta">
-                    <span className="card-note-attachment-name">{draft.name}</span>
-                    <small>
-                      {humanBytes(draft.byteSize)}
-                      {draft.existing ? ' · 已保存' : ' · 待保存'}
-                    </small>
-                  </div>
-                  <div className="card-note-row-actions">
-                    <IconButton
-                      name="arrowUp"
-                      label="上移"
-                      disabled={index === 0}
-                      onClick={() => handleMoveAttachment(draft.id, -1)}
-                    />
-                    <IconButton
-                      name="arrowDown"
-                      label="下移"
-                      disabled={index === attachments.length - 1}
-                      onClick={() => handleMoveAttachment(draft.id, 1)}
-                    />
-                    <IconButton
-                      name="close"
-                      label={`移除「${draft.name}」`}
-                      onClick={() => handleRemoveAttachment(draft.id)}
-                    />
-                  </div>
-                </li>
+          <div className="card-note-quote-tools">
+            <div className="card-note-markdown-toolbar" aria-label="Markdown 工具栏">
+              {MARKDOWN_TOOLBAR.map((item) => (
+                <IconButton
+                  key={item.label}
+                  name={item.icon}
+                  label={item.label}
+                  disabled={quoteMode !== '编辑'}
+                  onClick={() => insertMarkdown(item.prefix, item.suffix, item.placeholder)}
+                />
               ))}
-            </ul>
-          )}
-        </div>
+            </div>
+            <div className="card-note-quote-tabs" role="group" aria-label="原文视图">
+              <button
+                type="button"
+                className={quoteMode === '编辑' ? 'active' : ''}
+                aria-pressed={quoteMode === '编辑'}
+                onClick={() => setQuoteMode('编辑')}
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                className={quoteMode === '预览' ? 'active' : ''}
+                aria-pressed={quoteMode === '预览'}
+                onClick={() => setQuoteMode('预览')}
+              >
+                预览
+              </button>
+            </div>
+          </div>
 
-        <Field label="备注（可选）">
-          <textarea
-            rows={3}
-            value={comment}
-            placeholder="你的想法、追问或延伸阅读线索…"
-            onChange={(event) => setComment(event.target.value)}
-          />
-        </Field>
-
-        <Field label="页码（可选）" hint="单页填 12，范围填 12-15。">
-          <input
-            className={pageError === null ? '' : 'card-note-input-invalid'}
-            value={pageText}
-            placeholder="例如：12 或 12-15"
-            onChange={(event) => {
-              setPageText(event.target.value);
-              setPageError(null);
-            }}
-          />
-        </Field>
-        {pageError !== null && (
-          <p role="alert" className="card-note-message danger">
-            {pageError}
-          </p>
-        )}
-
-        <div className="card-note-tags-block">
-          <span className="card-note-tags-label">标签（可选，全局共享）</span>
-          {allTags.length > 0 && (
-            <div className="card-note-tag-picker">
-              {allTags.map((tag) => {
-                const selected = selectedTagIds.has(tag.id);
-                return (
-                  <button
-                    type="button"
-                    key={tag.id}
-                    className={selected ? 'card-note-chip active' : 'card-note-chip'}
-                    aria-pressed={selected}
-                    onClick={() => toggleTag(tag.id)}
-                  >
-                    {tag.name}
-                  </button>
-                );
-              })}
+          {quoteMode === '编辑' ? (
+            <textarea
+              ref={quoteRef}
+              className="card-note-quote-input"
+              aria-label="原文摘录（必填）"
+              rows={9}
+              value={quote}
+              placeholder="粘贴或输入书籍原文（支持 Markdown 与 LaTeX 公式）…"
+              onPaste={handleQuotePaste}
+              onChange={(event) => setQuote(event.target.value)}
+            />
+          ) : (
+            <div className="card-note-quote-preview">
+              {quote.trim() === '' ? (
+                <EmptyState
+                  icon="document"
+                  title="暂无内容"
+                  description="原文为空，切回编辑模式填写。"
+                />
+              ) : (
+                <MarkdownPreview source={quote} />
+              )}
             </div>
           )}
-          <div className="card-note-tag-create">
+
+          <div className="card-note-attachments">
+            <div className="card-note-attachments-heading">
+              <span>
+                图片附件{attachments.length > 0 ? ` · ${attachments.length}` : '（可选）'}
+              </span>
+              <Button onClick={() => void handlePickAttachments()}>
+                <Icon name="image" size={15} />
+                添加图片
+              </Button>
+            </div>
+            {attachments.length > 0 && (
+              <ul className="card-note-attachment-list">
+                {attachments.map((draft, index) => (
+                  <li key={draft.id}>
+                    {draft.previewDataUrl !== null ? (
+                      <img
+                        src={draft.previewDataUrl}
+                        alt={draft.name}
+                        className="card-note-attachment-thumb"
+                      />
+                    ) : (
+                      <span className="card-note-attachment-thumb card-note-attachment-fallback">
+                        <Icon name="image" size={18} />
+                      </span>
+                    )}
+                    <div className="card-note-attachment-meta">
+                      <span className="card-note-attachment-name">{draft.name}</span>
+                      <small>
+                        {humanBytes(draft.byteSize)}
+                        {draft.existing ? ' · 已保存' : ' · 待保存'}
+                      </small>
+                    </div>
+                    <div className="card-note-row-actions">
+                      <IconButton
+                        name="arrowUp"
+                        label="上移"
+                        disabled={index === 0}
+                        onClick={() => handleMoveAttachment(draft.id, -1)}
+                      />
+                      <IconButton
+                        name="arrowDown"
+                        label="下移"
+                        disabled={index === attachments.length - 1}
+                        onClick={() => handleMoveAttachment(draft.id, 1)}
+                      />
+                      <IconButton
+                        name="close"
+                        label={`移除「${draft.name}」`}
+                        onClick={() => handleRemoveAttachment(draft.id)}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <Field label="备注（可选）">
+            <textarea
+              rows={3}
+              value={comment}
+              placeholder="你的想法、追问或延伸阅读线索…"
+              onChange={(event) => setComment(event.target.value)}
+            />
+          </Field>
+        </div>
+        <aside className="card-note-editor-aside" aria-label="笔记信息">
+          <div className="card-note-editor-section-title">
+            <strong>笔记信息</strong>
+          </div>
+          <Field label="页码（可选）" hint="单页填 12，范围填 12-15。">
             <input
-              value={newTagName}
-              placeholder="输入新标签名，创建后自动选用"
-              onChange={(event) => setNewTagName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleCreateTag();
+              className={pageError === null ? '' : 'card-note-input-invalid'}
+              aria-invalid={pageError !== null}
+              aria-describedby={pageError !== null ? 'card-note-page-error' : undefined}
+              value={pageText}
+              placeholder="例如：12 或 12-15"
+              onChange={(event) => {
+                setPageText(event.target.value);
+                setPageError(null);
               }}
             />
-            <Button disabled={newTagName.trim() === ''} onClick={() => void handleCreateTag()}>
-              创建标签
-            </Button>
+          </Field>
+          {pageError !== null && (
+            <p id="card-note-page-error" role="alert" className="card-note-message danger">
+              {pageError}
+            </p>
+          )}
+
+          <div className="card-note-tags-block">
+            <span className="card-note-tags-label">标签（可选）</span>
+            {allTags.length > 0 && (
+              <div className="card-note-tag-picker">
+                {allTags.map((tag) => {
+                  const selected = selectedTagIds.has(tag.id);
+                  return (
+                    <button
+                      type="button"
+                      key={tag.id}
+                      className={selected ? 'card-note-chip active' : 'card-note-chip'}
+                      aria-pressed={selected}
+                      onClick={() => toggleTag(tag.id)}
+                    >
+                      {tag.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div className="card-note-tag-create">
+              <input
+                aria-label="新标签名称"
+                value={newTagName}
+                placeholder="输入新标签…"
+                onChange={(event) => setNewTagName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.nativeEvent.isComposing)
+                    void handleCreateTag();
+                }}
+              />
+              <Button disabled={newTagName.trim() === ''} onClick={() => void handleCreateTag()}>
+                添加
+              </Button>
+            </div>
           </div>
-        </div>
+          <p className="card-note-editor-hint">标签在所有书籍间共享。选中标签，为这条笔记分类。</p>
+        </aside>
 
         <div className="card-note-editor-footer">
-          <small>{snapshot === null ? '' : dirty ? '有未保存的修改。' : '所有修改已保存。'}</small>
+          <small role="status">
+            {snapshot === null
+              ? '正在加载…'
+              : busy
+                ? '正在保存…'
+                : dirty
+                  ? '有未保存的修改'
+                  : noteId === null
+                    ? '开始记录你的第一段摘录'
+                    : '所有修改已保存'}
+          </small>
           <div>
+            <span className="card-note-shortcut">Ctrl / ⌘ S 保存</span>
             <Button variant="ghost" onClick={handleBack}>
               返回
             </Button>
             <Button
               variant="primary"
-              disabled={busy || quote.trim() === ''}
+              disabled={busy || snapshot === null || quote.trim() === ''}
               onClick={() => void handleSave()}
             >
-              {busy ? '保存中…' : '保存'}
+              {busy ? '保存中…' : '保存笔记'}
             </Button>
           </div>
         </div>

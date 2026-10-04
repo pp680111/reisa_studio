@@ -253,6 +253,14 @@ export class CardNoteRuntime implements RuntimeModule {
           const result = await coordinator.synchronize();
           return result as unknown as JsonValue;
         }
+        case PAGE_ACTIONS.saveSyncConnection: {
+          await saveSyncConnection(config, {
+            workspacePath: string('workspacePath'),
+            remoteUrl: string('remoteUrl'),
+          });
+          await scheduler.restart();
+          return { saved: true };
+        }
         case PAGE_ACTIONS.saveSyncAuto: {
           const interval = optionalInt('intervalMinutes');
           await saveSyncAuto(config, {

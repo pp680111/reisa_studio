@@ -239,5 +239,7 @@ export const cloneSyncRepository = (workspacePath: string, remoteUrl: string) =>
     remoteUrl,
   });
 export const syncNow = () => callPage<SyncRunResultJson>(PAGE_ACTIONS.syncNow);
+export const saveSyncConnection = (workspacePath: string, remoteUrl: string) =>
+  callPage<{ saved: true }>(PAGE_ACTIONS.saveSyncConnection, { workspacePath, remoteUrl });
 export const saveSyncAuto = (autoSync: boolean, intervalMinutes: number) =>
   callPage<{ saved: true }>(PAGE_ACTIONS.saveSyncAuto, { autoSync, intervalMinutes });

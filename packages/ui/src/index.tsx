@@ -167,15 +167,14 @@ export function EmptyState({
     </div>
   );
 }
+/** 页面标题区：眉题 + 标题 + 操作按钮。刻意不提供描述行——页面不放装饰性文案。 */
 export function PageHeading({
   eyebrow,
   title,
-  description,
   children,
 }: {
   eyebrow?: string;
   title: string;
-  description: string;
   children?: ReactNode;
 }) {
   return (
@@ -183,7 +182,6 @@ export function PageHeading({
       <div>
         {eyebrow && <span className="eyebrow">{eyebrow}</span>}
         <h1>{title}</h1>
-        <p>{description}</p>
       </div>
       <div className="heading-actions">{children}</div>
     </div>

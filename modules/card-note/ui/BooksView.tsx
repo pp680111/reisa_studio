@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, EmptyState, IconButton, PageHeading } from '@reisa/ui';
+import { Button, EmptyState, Icon, IconButton } from '@reisa/ui';
 import {
   createBook,
   deleteBook,
@@ -22,26 +22,39 @@ export function BooksView({
   notify,
   onOpenBook,
   onOpenTags,
+  onOpenSettings,
 }: {
   notify: (message: string) => void;
   onOpenBook: (bookId: string) => void;
   onOpenTags: () => void;
+  onOpenSettings: () => void;
 }) {
   const [books, setBooks] = useState<BookJson[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<BookJson | null>(null);
   const [importing, setImporting] = useState(false);
+  const [query, setQuery] = useState('');
+  const visibleBooks = books?.filter((book) =>
+    book.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
 
-  const refresh = useCallback(async () => {
-    try {
-      setBooks(await listBooks());
-    } catch (error) {
-      notify(errorMessage(error));
-    }
-  }, [notify]);
+  const refresh = useCallback(
+    async (options?: { silent?: boolean }) => {
+      try {
+        setBooks(await listBooks());
+      } catch (error) {
+        if (options?.silent !== true) notify(errorMessage(error));
+      }
+    },
+    [notify],
+  );
 
+  // Q5 刷新策略：操作后主动刷新 + 5 秒轮询；轮询承接页面外变更（克隆/同步导入、
+  // 后台自动同步），失败时静默保留当前数据，避免错误提示重复弹出。
   useEffect(() => {
     void refresh();
+    const timer = setInterval(() => void refresh({ silent: true }), 5000);
+    return () => clearInterval(timer);
   }, [refresh]);
 
   const handleImport = async () => {
@@ -96,19 +109,50 @@ export function BooksView({
 
   return (
     <div className="card-note-view">
-      <PageHeading
-        eyebrow="模块"
-        title="卡片笔记"
-        description="以书籍为容器整理阅读摘录、备注与页码。"
-      >
-        <Button disabled={importing} onClick={() => void handleImport()}>
-          导入 JSON
+      <div className="card-note-library-tools">
+        <div className="card-note-collection-label">
+          <Icon name="book" size={17} />
+          <strong>我的书籍</strong>
+          {books !== null && <span>{books.length}</span>}
+        </div>
+        <div className="card-note-search" role="search">
+          <Icon name="search" size={16} />
+          <input
+            aria-label="搜索书籍"
+            value={query}
+            placeholder="搜索书名…"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {query !== '' && (
+            <IconButton name="close" label="清空书籍搜索" onClick={() => setQuery('')} />
+          )}
+        </div>
+        <Button variant="ghost" onClick={onOpenTags}>
+          标签管理
         </Button>
-        <Button onClick={onOpenTags}>标签管理</Button>
+        <Button variant="ghost" disabled={importing} onClick={() => void handleImport()}>
+          {importing ? '导入中…' : '导入书籍'}
+        </Button>
+        <IconButton name="settings" label="模块设置" onClick={onOpenSettings} />
         <Button variant="primary" onClick={() => setCreating(true)}>
-          创建书籍
+          <Icon name="plus" size={16} />
+          新建书籍
         </Button>
-      </PageHeading>
+      </div>
+      {books === null && (
+        <p className="card-note-loading" role="status">
+          正在加载书籍…
+        </p>
+      )}
+      {books !== null && books.length > 0 && visibleBooks?.length === 0 && (
+        <EmptyState
+          icon="search"
+          title="没有找到这本书"
+          description="试试其他书名，或清空搜索查看全部书籍。"
+        >
+          <Button onClick={() => setQuery('')}>清空搜索</Button>
+        </EmptyState>
+      )}
 
       {books !== null && books.length === 0 && (
         <EmptyState icon="book" title="还没有书籍" description="创建一本书，开始记录你的阅读笔记。">
@@ -120,15 +164,20 @@ export function BooksView({
 
       {books !== null && books.length > 0 && (
         <ul className="card-note-book-list">
-          {books.map((book) => (
+          {visibleBooks?.map((book) => (
             <li key={book.id}>
               <button
                 type="button"
                 className="card-note-book-row"
                 onClick={() => onOpenBook(book.id)}
               >
-                <span className="card-note-book-title">{book.title}</span>
-                <span className="card-note-row-meta">更新于 {formatTime(book.updatedAt)}</span>
+                <span className="card-note-book-cover" aria-hidden="true">
+                  <Icon name="book" size={25} />
+                </span>
+                <span className="card-note-book-info">
+                  <span className="card-note-book-title">{book.title}</span>
+                  <span className="card-note-row-meta">更新于 {formatTime(book.updatedAt)}</span>
+                </span>
               </button>
               <div className="card-note-row-actions">
                 <IconButton

@@ -510,7 +510,7 @@ export function AppShell() {
               open={settingsModuleId === module.id && enabled.includes(module.id)}
               onClose={() => setSettingsModuleId(null)}
               title={`${module.name} · 模块设置`}
-              wide={module.id === 'knowledge'}
+              wide={module.id === 'knowledge' || module.id === 'card-note'}
               feedback={notice}
             >
               <Settings notify={setNotice} close={() => setSettingsModuleId(null)} />

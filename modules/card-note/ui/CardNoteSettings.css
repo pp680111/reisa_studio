@@ -1,0 +1,265 @@
+.card-note-sync-settings {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.card-note-sync-body {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.card-note-sync-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  z-index: 1;
+}
+
+.card-note-sync-footer p {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.card-note-sync-footer p svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.card-note-sync-footer .button {
+  flex-shrink: 0;
+}
+
+.card-note-sync-section {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-secondary);
+}
+
+.card-note-sync-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--accent-tint);
+  border-color: var(--brand-border);
+}
+
+.card-note-sync-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.card-note-sync-settings h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.card-note-sync-settings h3 svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.card-note-sync-status .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.card-note-sync-description {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.card-note-sync-status .card-note-sync-description {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.card-note-sync-description code {
+  margin-left: 4px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.card-note-sync-fields {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.card-note-sync-settings .field {
+  margin: 0;
+  gap: 6px;
+}
+
+.card-note-sync-settings .field-group legend {
+  padding-bottom: 6px;
+}
+
+.card-note-sync-settings .field small {
+  color: var(--muted);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.card-note-sync-settings input {
+  height: 40px;
+  padding: 9px 11px;
+}
+
+.card-note-sync-settings input:disabled {
+  color: var(--faint);
+  background: var(--surface-secondary);
+  cursor: not-allowed;
+}
+
+.card-note-sync-settings .button {
+  min-height: 40px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.card-note-sync-path {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-note-sync-connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.card-note-sync-auto-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.card-note-sync-auto-header .switch {
+  flex-shrink: 0;
+}
+
+.card-note-sync-auto-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.card-note-sync-interval {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-note-sync-interval input {
+  width: 104px;
+}
+
+.card-note-sync-interval > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.card-note-sync-safety {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.card-note-sync-safety summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.card-note-sync-safety summary::-webkit-details-marker {
+  display: none;
+}
+
+.card-note-sync-safety summary > svg {
+  flex-shrink: 0;
+}
+
+.card-note-sync-safety summary > svg:last-child {
+  margin-left: auto;
+}
+
+.card-note-sync-safety[open] summary > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.card-note-sync-safety ul {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 440px) {
+  .card-note-sync-overview,
+  .card-note-sync-auto-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .card-note-sync-connect-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .card-note-sync-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 18px;
+  }
+}
+
+@container (max-width: 320px) {
+  .card-note-sync-section {
+    padding: 12px;
+  }
+
+  .card-note-sync-path {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -20,11 +20,7 @@ export function ModuleManager({
   const [query, setQuery] = useState('');
   return (
     <div className="workspace-page manager-page">
-      <PageHeading
-        eyebrow="YOUR TOOLKIT"
-        title="为工作空间，添一点可能"
-        description="独立使用，也可以成为会话中的能力。"
-      >
+      <PageHeading eyebrow="YOUR TOOLKIT" title="为工作空间，添一点可能">
         <Badge>{enabled.length} 个模块已启用</Badge>
       </PageHeading>
       <div className="manager-toolbar">

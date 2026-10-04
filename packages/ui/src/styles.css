@@ -1031,11 +1031,6 @@ pre {
 .page-heading h1 {
   margin-bottom: 7px;
 }
-.page-heading p {
-  font-size: 14px;
-  margin-bottom: 0;
-  color: var(--muted);
-}
 .heading-actions {
   display: flex;
   align-items: center;
@@ -2446,9 +2441,6 @@ blockquote {
   .page-heading h1,
   .module-main .page-heading h1 {
     font-size: 21px;
-  }
-  .page-heading p {
-    font-size: 13px;
   }
   .heading-actions {
     gap: 6px;

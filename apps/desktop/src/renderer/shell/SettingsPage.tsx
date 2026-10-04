@@ -104,11 +104,7 @@ export function SettingsPage({
 
   return (
     <div className="workspace-page settings-page">
-      <PageHeading
-        eyebrow="MAKE IT YOURS"
-        title="按你的习惯，安放工作空间"
-        description="共享基础配置，保留每个模块自己的选择。"
-      />
+      <PageHeading eyebrow="MAKE IT YOURS" title="按你的习惯，安放工作空间" />
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="设置分组">
           {[

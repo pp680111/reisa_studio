@@ -52,25 +52,32 @@ export function BookDetailView({
     return () => window.clearTimeout(timer);
   }, [query]);
 
-  const refresh = useCallback(async () => {
-    try {
-      const book = await getBook(bookId);
-      if (book === null) {
-        notify('书籍不存在或已被删除');
-        onBack();
-        return;
+  const refresh = useCallback(
+    async (options?: { silent?: boolean }) => {
+      try {
+        const book = await getBook(bookId);
+        if (book === null) {
+          notify('书籍不存在或已被删除');
+          onBack();
+          return;
+        }
+        setTitle(book.title);
+        const notes = await listNotes(bookId, debouncedQuery);
+        const tagsPerNote = await Promise.all(notes.map((note) => getNoteTags(note.id)));
+        setRows(notes.map((note, index) => ({ note, tags: tagsPerNote[index] ?? [] })));
+      } catch (error) {
+        if (options?.silent !== true) notify(errorMessage(error));
       }
-      setTitle(book.title);
-      const notes = await listNotes(bookId, debouncedQuery);
-      const tagsPerNote = await Promise.all(notes.map((note) => getNoteTags(note.id)));
-      setRows(notes.map((note, index) => ({ note, tags: tagsPerNote[index] ?? [] })));
-    } catch (error) {
-      notify(errorMessage(error));
-    }
-  }, [bookId, debouncedQuery, notify, onBack]);
+    },
+    [bookId, debouncedQuery, notify, onBack],
+  );
 
+  // Q5 刷新策略：操作后主动刷新 + 5 秒轮询；轮询承接页面外变更（克隆/同步导入、
+  // 后台自动同步），失败时静默保留当前数据，避免错误提示重复弹出。
   useEffect(() => {
     void refresh();
+    const timer = setInterval(() => void refresh({ silent: true }), 5000);
+    return () => clearInterval(timer);
   }, [refresh, refreshToken]);
 
   const handleExport = async (format: ExportFormatJson) => {
@@ -97,9 +104,27 @@ export function BookDetailView({
         <Button variant="ghost" onClick={onBack}>
           ← 返回书籍
         </Button>
-        <label className="card-note-search">
+      </div>
+
+      <PageHeading eyebrow="阅读笔记" title={title ?? '正在加载…'}>
+        <Button disabled={exporting} onClick={() => setExportOpen(true)}>
+          {exporting ? '导出中…' : '导出书籍'}
+        </Button>
+        <Button variant="primary" onClick={() => onOpenEditor(null)}>
+          <Icon name="plus" size={16} /> 新建笔记
+        </Button>
+      </PageHeading>
+
+      <div className="card-note-library-tools">
+        <span className="card-note-result-count" role="status">
+          {rows === null
+            ? '正在加载…'
+            : `${debouncedQuery.trim() === '' ? '共' : '找到'} ${rows.length} 条笔记`}
+        </span>
+        <div className="card-note-search" role="search">
           <Icon name="search" size={16} />
           <input
+            aria-label="搜索本书笔记"
             value={query}
             placeholder="搜索本书笔记的原文与备注"
             onChange={(event) => setQuery(event.target.value)}
@@ -107,7 +132,7 @@ export function BookDetailView({
           {query !== '' && (
             <IconButton name="close" label="清空搜索" onClick={() => setQuery('')} />
           )}
-        </label>
+        </div>
         <Tabs
           items={VIEW_MODES}
           value={viewMode}
@@ -115,31 +140,14 @@ export function BookDetailView({
         />
       </div>
 
-      <PageHeading
-        eyebrow="书籍"
-        title={title ?? '…'}
-        description={
-          rows === null
-            ? '正在加载…'
-            : debouncedQuery.trim() === ''
-              ? `共 ${rows.length} 条笔记`
-              : `匹配 ${rows.length} 条笔记`
-        }
-      >
-        <Button disabled={exporting} onClick={() => setExportOpen(true)}>
-          导出
-        </Button>
-        <Button variant="primary" onClick={() => onOpenEditor(null)}>
-          新建笔记
-        </Button>
-      </PageHeading>
-
       {rows !== null && rows.length === 0 && debouncedQuery.trim() !== '' && (
         <EmptyState
           icon="search"
           title="没有匹配的笔记"
           description={`当前书籍内没有原文或备注包含「${debouncedQuery.trim()}」。`}
-        />
+        >
+          <Button onClick={() => setQuery('')}>清空搜索</Button>
+        </EmptyState>
       )}
       {rows !== null && rows.length === 0 && debouncedQuery.trim() === '' && (
         <EmptyState
