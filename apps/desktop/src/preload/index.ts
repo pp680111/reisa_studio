@@ -48,7 +48,10 @@ const api = {
   modulePage: {
     invoke: (moduleId: string, action: string, input?: unknown) =>
       ipcRenderer.invoke('reisa/module/page', { moduleId, action, input }),
-    pickPath: (mode: 'directory' | 'file') => ipcRenderer.invoke('reisa/module/pickPath', { mode }),
+    pickPath: (mode: 'directory' | 'file', extensions?: string[]) =>
+      ipcRenderer.invoke('reisa/module/pickPath', { mode, extensions }),
+    pickSavePath: (suggestedName?: string, extensions?: string[]) =>
+      ipcRenderer.invoke('reisa/module/pickSavePath', { suggestedName, extensions }),
   },
   moduleConfig: {
     get: (moduleId: string, key: string) =>

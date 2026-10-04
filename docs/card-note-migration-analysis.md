@@ -1,9 +1,13 @@
 # Card Note 目标项目分析与迁移设计指引
 
-> 版本：0.4（2026-10-03）
+> 版本：0.5（2026-10-03）
 > v0.2 变更：按范围决策移除 AI 辅助与画板视图。
 > v0.3 变更：R4 补充决策——移除书籍内双向链接（见《迁移范围决策记录》）。
 > v0.4 变更：Q1/Q2 按推荐决策落地；新增附录 C 展开 Q4 数据通道方案对比。
+> v0.5 变更：复核 Q4——知识库模块（提交 2c325f7）已在宿主落地数据通道机制，Q4/H1/H2 关闭，card-note 沿用既有模式（见附录 C.0）。
+> v0.6 变更：复核其余待决策问题（Q5/Q6/Q8–Q12）：Q11 实测 FTS5 后维持 LIKE；Q10 依知识库先例更新建议；Q12 确认源仓库漂移风险已现实化；app_settings 建议移入模块 settings.json（附录 A）。
+> v0.7 变更：全部待决策问题关闭——Q6 确认随迁（M5）；Q9 方案改为"配置旧应用 Git 同步仓库地址导入"（不再读旧 SQLite 文件）；Q5/Q10/Q12 按推荐关闭。
+> 实施进度：**迁移全部完成**——M0（骨架+数据层）、M1（工作区 UI）、M2（Markdown/公式+附件）、M3（列表/网格双视图）、M4（导出/导入）、M5（Git 同步）、M6（旧仓库导入）全部通过验收（单测、typecheck、边界检查、构建、Electron 冒烟、真实宿主 CDP 端到端）。M5 备注：sync 子系统按源结构移植（document/git-client/settings/workspace/coordinator+scheduler 五件），实体集合无 link（R4）；同步设置存模块 settings.json（v0.6 决策）；**导入前 SQLite 备份已补（D3 关闭，card-note.sqlite.bak 滚动覆盖）**；协调器经真实本地裸仓库完成 初始化→同步推送→克隆导入→UUID 一致 的端到端验证。M6 备注：Q9 方案即"克隆已有仓库"流程（`clone_sync_repository` 页面动作 + 设置面板按钮），与 M5 组件完全复用；旧格式兼容测试覆盖 links/ 静默忽略、ai_accepted 标签迁入、UUID 幂等。宿主补充：`reisa/module/pickSavePath` 保存对话框（H2 关闭）、CSP font-src 增加 data:（KaTeX 内嵌字体）、smoke 断言错误输出诊断。遗留偏差见第 9 节与各阶段备注。
 > 用途：本文档是 card_note 项目（`D:\otherCode\card_note`）的完整代码分析，作为"把 Card Note 迁移为 Reisa Studio 内置模块"这一后续工作的**设计基线**。后续的模块设计文档、迁移实施计划均以本文档的事实为准。
 >
 > 阅读约定：`lib/...` 路径均指 `D:\otherCode\card_note\lib\`；行号以当前代码为准。
@@ -43,7 +47,7 @@
 
 **R2 的连锁影响**：
 
-- 【R4 更新】双向链接已整体移除（见 R4）；`note_tags.source` 字段保留（同步文档格式的组成部分），取值恒为 `manual`（旧库中 `ai_accepted` 值原样保留，仅作来源标记）。
+- 【R4 更新】双向链接已整体移除（见 R4）；`note_tags.source` 字段保留（同步文档格式的组成部分），取值恒为 `manual`（旧数据同步文档中的 `ai_accepted` 值原样保留，仅作来源标记）。
 - `content_revision` 仍保留并维持"每次保存递增"：它是同步文档与 JSON 导出格式的组成部分。
 - `markdownToPlainText`（仅 AI 提示词使用）随之移除；`tabularTextToMarkdown`（编辑器粘贴表格）保留。
 - 同步子系统不受影响：AI 任务队列与待确认建议本就被排除在同步仓库之外（源设计即如此）。
@@ -54,7 +58,7 @@
 - 详情页/编辑页不再有关联卡片区域，笔记间关系数据在目标中彻底不存在。
 - 同步仓库无 `links/` 目录，`SyncDocument` 类型集合收窄为 book/note/tag/note-tag/attachment；旧 card_note 同步仓库中的 `links/` 目录会被目标校验器静默忽略（校验器只读已知类型目录），无需迁移处理。
 - 导出/导入格式本就不含链接（源实现即如此），M4 不受影响。
-- M6 旧库导入跳过 `note_links` 表。
+- M6 旧数据导入（v0.7 起为旧 Git 同步仓库导入）不导入链接文档：`links/` 目录随 R4 被校验器静默忽略。
 
 **R2 回退说明（R4 生效后更新）**：R4 移除链接后，AI 链接自动发现已无数据载体；R1 又已明确移除标签建议——AI 功能在目标范围内已无附着点，R2 不再存在回退场景。若未来重新需要笔记智能，应基于 Q10 的宿主主 Agent 能力路径重新设计，而非恢复 card_note 的私有 AI 栈。
 
@@ -118,7 +122,7 @@
 | Dio | 主进程 `fetch`（Node 22 内置）或 `@ai-sdk/openai-compatible` | 低（仅 AI 客户端使用，随 R2 移除） |
 | flutter_secure_storage（凭据） | 宿主 credentials（safeStorage/DPAPI 加密 JSON），但 **ModuleContext 未暴露凭据句柄** | 中（随 R2 移除） |
 | `Process.run('git')`（同步） | `child_process.execFile('git')` | 低 |
-| file_selector | Electron `dialog` IPC（宿主现无此通道） | 中（需宿主扩展） |
+| file_selector | Electron `dialog` IPC | 中（已由 `reisa/module/pickPath` 落地，缺保存对话框，见 H2） |
 | uuid 4.5 | `crypto.randomUUID()` | 零 |
 | UTC 毫秒时间戳 / UUID 主键 | 相同约定 | 零 |
 
@@ -202,10 +206,10 @@ lib/features/sync/        domain/(document 181 + settings 36)
 | `note_links`【R4 移除】 | id (UUID) | book_id、note_a_id、note_b_id 均 CASCADE | (note_a_id, note_b_id) | 无向边，端点按 `compareTo` 升序存储；source: `manual` \| `ai` |
 | `ai_tag_suggestions`【R1 移除】 | id (UUID) | note_id → notes CASCADE | (note_id, normalizedName, content_revision) | display_name、reason(可空)、status: `pending`\|`accepted`\|`rejected`、decided_at |
 | `ai_jobs`【R2 移除】 | id (UUID) | —（**无外键**） | (job_type, entity_id) | job_type: `tag_note`\|`link_book`；status: `pending`\|`running`\|`retry_wait`；attempts、next_run_at、last_error_code |
-| `app_settings` | key (TEXT) | — | — | KV 设置（AI 配置 + 同步配置，**不含 API Key**） |
+| `app_settings` | key (TEXT) | — | — | KV 设置（AI 配置 + 同步配置，**不含 API Key**）。【v0.6】迁移目标不建此表：同步配置存模块 settings.json（见附录 A 注） |
 | `sync_outbox` | (entity_type, entity_id) | — | — | operation: `upsert`\|`tombstone`；changed_at；同实体只保留最新一条 |
 
-> v0.2/v0.3 注：`ai_tag_suggestions`（R1）、`ai_jobs`（R2）与 `note_links`（R4）不进入迁移目标库——目标库直接建精简 schema（附录 A），无需复刻 v1→v3 迁移路径；M6 旧库导入时识别并跳过这些表。
+> v0.2/v0.3 注：`ai_tag_suggestions`（R1）、`ai_jobs`（R2）与 `note_links`（R4）不进入迁移目标库——目标库直接建精简 schema（附录 A），无需复刻 v1→v3 迁移路径；这三类数据本就不在 Git 同步仓库中（AI 数据被同步设计排除、links/ 随 R4 静默忽略），故 M6 的旧仓库导入天然不含它们。
 
 ### 4.2 迁移历史
 
@@ -355,7 +359,7 @@ OpenAiAiService（openai_ai_service.dart）
   assets/<sha256>.<ext>         附件二进制
 ```
 
-同步设置无独立表（设计文档中的 `sync_state`/`sync_conflicts` 未实现），全部在 `app_settings`；deviceId 首次 load 时生成并持久化。
+同步设置无独立表（设计文档中的 `sync_state`/`sync_conflicts` 未实现），全部在 `app_settings`；deviceId 首次 load 时生成并持久化。（迁移目标：改存模块 settings.json，见附录 A v0.6 注。）
 
 初始化两条路径：`initializeNewWorkspace`（空目录 init + 全量快照导出）、`cloneAndImport`（克隆 → 校验 → 导入；要求本地库为空或已备份，重试时复用已克隆干净的工作区）。
 
@@ -452,24 +456,25 @@ Card Note 的 docs/ 质量很高，但**代码已演进，下列偏差已逐一�
 
 ### 10.1 宿主现状（结论摘要）
 
-宿主 Reisa Studio 的模块系统**协议完整但当前没有任何模块**（`composition/modules.ts` 与 `RUNTIME_MODULE_FACTORIES` 均为空数组；`modules/` 目录不存在但 pnpm workspace / tsconfig / check-boundaries 均已预留通配）。
+宿主 Reisa Studio 的模块系统协议完整。**2026-10-03 提交 2c325f7 已接入首个内置模块 `knowledge`**（`modules/knowledge/`），模块数据通道、模块配置通道与文件选择通道随之落地——本节初版"宿主无模块、通道缺失"的判断已被该提交取代，宿主扩展点 H1/H2 均已实现（见 10.2 与附录 C.0）。
 
 模块体系关键点：
 
 - **RuntimeModule**（主进程）：`activate(context: ModuleContext) → ModuleActivation{tools, deactivate}`；`ModuleContext = { moduleId, protocolVersion:'1', storage:{dataDir}, config:{get,set}, logger, invoke }`。生命周期状态机 `disabled→activating→active→deactivating`，失败置 `failed` 不阻断他人。
 - **ModuleContribution**（renderer）：`{ id, name, description, version, source:'builtin'|'external', capabilities(仅声明), navigation{icon,aliases,keywords,page}, settings?, resultRenderers? }`。
-- 组装：UI 侧在 `apps/desktop/src/composition/modules.ts` 加清单项；运行侧在 `composition/runtime.ts` 的 `RUNTIME_MODULE_FACTORIES` 加工厂函数（约定 `@reisa/<pkg>/runtime` 子路径入口，只允许组合根导入）。
+- 组装：UI 侧在 `composition/modules.ts` 加清单项（现为 `[knowledgeManifest]`）；运行侧在 `composition/runtime.ts` 的 `RUNTIME_MODULES` 加条目，工厂可携带 `registerPageService` 回调登记页面服务（约定 `@reisa/<pkg>/runtime` 子路径入口，只允许组合根导入）。
+- 模块页面数据通道（2c325f7 新增，通用机制）：renderer 经 `reisa.modulePage.invoke(moduleId, action, input)` 调用模块 runtime 注册的页面服务（action 白名单是模块 runtime 内的 switch）；`reisa.moduleConfig.get/set` 读写模块私有 settings.json；`reisa.modulePage.pickPath` 封装目录/文件选择对话框。管理面操作只走页面服务、绝不注册为 Agent 能力（宿主 `listEnabledCapabilities()` 无筛选，注册即对模型全量可见）。
 - 模块私有数据布局：`app-data/modules/<id>/`（settings.json 由 foundation 自动持久化；dataDir 自理，宿主建议 data.sqlite + files/）。
 - 主 Agent 能力调用：模块注册的 capability 自动成为主会话工具（AI SDK v7，宿主管理循环）。
 - 数据持久化先例：主进程 `node:sqlite`（`DatabaseSync`）存会话，**零原生依赖**；凭据走 safeStorage(DPAPI) 加密 JSON。
 - 工程约束（check-boundaries）：模块 renderer 代码禁 `node:*`/`electron`；模块间禁止互引；renderer 只能 import `@reisa/module-sdk` 与 `@reisa/ui`。
 
-### 10.2 迁移 Card Note 需要的宿主扩展点（宿主侧唯一需要动的代码）
+### 10.2 宿主扩展点状态（v0.5 复核）
 
-| # | 扩展 | 说明 |
+| # | 扩展 | 状态与说明 |
 |---|---|---|
-| H1 | **模块数据 IPC 通道**（最重要） | 模块页面组件只能拿到 `ModulePageProps{openSettings,notify,availableModuleIds}`，renderer 与模块 runtime 之间没有任何数据通道。需仿照现有白名单模式新增类型化通道（`main/index.ts` registerIpc + `preload/index.ts` + `renderer/bridge.ts` 三处），或设计一个通用的 `reisa/module/<id>/<command>` 分发通道 |
-| H2 | 文件选择/保存对话框 IPC | 附件选择、导出保存、同步目录选择都需要 Electron dialog；宿主现无此通道 |
+| H1 | ~~模块数据 IPC 通道~~ **已落地（2c325f7）** | 知识库模块实现为通用受限通道：`reisa/module/page`（页面服务分发，主进程校验模块 active 与服务存在，错误归一 `{ok, value\|error:{code,message}}`）+ `reisa/module/config/get\|set`（模块私有 settings.json 读写）。注册表在组合根（`getModulePageService`/`moduleConfigScopes`），`ModuleHost` 与 module-sdk 未为页面服务扩展；详见附录 C.0 |
+| H2 | ~~文件选择/保存对话框 IPC~~ **大部分落地（2c325f7）** | `reisa/module/pickPath` 已提供 openDirectory/openFile；**尚无保存对话框**——M4 导出"选择保存位置"需要宿主补 `pickSavePath` 或扩展 mode 参数（小改动，届时一并做） |
 | H3 | ~~凭据句柄~~ **已随 R2/R4 取消** | 模块内不再持有任何凭据；未来的笔记智能走宿主主 Agent 能力路径（Q10），无需恢复此项 |
 | H4 | （可选）UI 图标 | 侧栏图标是 lucide 名称字符串，`book`/`file`/`grid`/`list` 等已存在，大概率无需新增 |
 | H5 | （可选）能力注册 | 把笔记检索/CRUD 注册为主 Agent 能力（第二阶段再做，不阻塞迁移） |
@@ -483,13 +488,13 @@ Card Note 的 docs/ 质量很高，但**代码已演进，下列偏差已逐一�
 | `ai/`（client/service/scheduler/settings/secure_store） | 【R2 移除】 |
 | `sync/`（workspace/coordinator/git_client/scheduler/settings） | `src/runtime/sync/`（child_process 调 git） |
 | `export/book_export_service.dart` | `src/runtime/export.ts` |
-| `app/providers.dart` 的流 | runtime 查询服务 + IPC（初始拉取 + 变更事件推送，或轮询） |
+| `app/providers.dart` 的流 | runtime 页面服务（`reisa/module/page`）+ 操作后主动刷新 + 轮询（沿用知识库模式，见 Q5） |
 | go_router 5 页面 | 模块页面内部视图状态机（列表 → 详情 → 编辑器；同步设置 → 模块 settings Dialog） |
 | `presentation/*`（6 个页面组件） | `src/ui/` React 组件（对齐 `@reisa/ui` tokens，双主题） |
 | flutter_markdown(+latex) | react-markdown + remark-gfm（宿主已有）+ remark-math + rehype-katex（新增依赖） |
 | flutter_staggered_grid_view | CSS 自实现 |
 | InteractiveViewer + CustomPainter | 【R3 移除】 |
-| file_selector / path_provider / secure_storage | 宿主 IPC（H2）/ `storage.dataDir`；secure_storage 随 R2 移除 |
+| file_selector / path_provider / secure_storage | `reisa/module/pickPath`（已落地，缺保存对话框见 H2）/ `storage.dataDir`；secure_storage 随 R2 移除 |
 | 测试 15 个 | `node --test`（runtime 侧直译）+ 组件测试（按宿主测试习惯 .mjs） |
 
 ---
@@ -518,40 +523,42 @@ Card Note 的 docs/ 质量很高，但**代码已演进，下列偏差已逐一�
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **M0 模块骨架 + 数据层** | `modules/card-note/` 包骨架（runtime/ui/contracts）、宿主组合根两处注册、H1 数据 IPC 通道、`database.ts`（精简 schema，见附录 A + 事务规则）、**第 5 节规则对应单测移植（AI/画板/链接部分除外）** | 建库/级联删除等测试通过；模块可启停且数据保留 |
+| **M0 模块骨架 + 数据层** | `modules/card-note/` 包骨架（contracts/runtime/ui/client 四件套，仿知识库模块）、宿主组合根两处注册（通道机制已就绪，零宿主改动）、`database.ts`（精简 schema，见附录 A + 事务规则）、**第 5 节规则对应单测移植（AI/画板/链接部分除外）** | 建库/级联删除等测试通过；模块可启停且数据保留 |
 | **M1 书籍/笔记/标签/搜索** | 书籍列表页、笔记编辑器（含校验/版本递增/标签多选）、标签管理、书内搜索（LIKE + 250ms 防抖） | FR-01、FR-02、FR-03、FR-08、FR-11 对应行为可用 |
-| **M2 Markdown/公式 + 附件** | react-markdown + katex 渲染、附件（H2 对话框 + SHA-256 存储） | FR-12 剩余部分（详情完整展示原文/备注/页码/标签）；附件校验测试通过 |
+| **M2 Markdown/公式 + 附件** | react-markdown + katex 渲染、附件（`reisa/module/pickPath` 选路径 + SHA-256 存储） | FR-12 剩余部分（详情完整展示原文/备注/页码/标签）；附件校验测试通过 |
 | **M3 列表/网格视图** | 列表/卡片网格切换（原三视图裁去画板） | FR-09；窗口缩放无重叠溢出 |
 | **M4 导出/导入** | MD/JSON 导出、JSON 导入 | 与 card_note 产物格式一致（可用旧版导出文件做回归） |
-| **M5 Git 同步（可选，见 Q6）** | sync_workspace/coordinator/git_client 直译（仓库格式无 `links/`，文档类型收窄）+ 同步设置页 | `sync_workspace_test`/`sync_git_test` 移植通过（裁去链接用例） |
-| **M6 旧数据导入工具** | 读旧 `card_note.sqlite`（node:sqlite 可直接打开）→ 写入模块库；**跳过旧库 `ai_jobs`/`ai_tag_suggestions`/`note_links` 表**，其余表 UUID/时间戳兼容、近似纯拷贝 | 旧库书籍/笔记/标签/附件/设置全量迁入，AI 与链接数据按预期丢弃 |
+| **M5 Git 同步（已确认随迁，Q6）** | sync_workspace/coordinator/git_client 直译（仓库格式无 `links/`，文档类型收窄）+ 同步设置页 + **导入前 SQLite 备份（补 D3）** | `sync_workspace_test`/`sync_git_test` 移植通过（裁去链接用例）；同步失败不损坏数据库 |
+| **M6 旧应用数据导入（Q9 方案）** | 配置旧 card_note 同步仓库的 Git 地址 + 本地克隆目录 → clone → `readAndValidate` → `importDocuments`（复用 M5 的 GitClient/SyncDocument/validator/importer，即源 `cloneAndImport` 的移植 + 导入设置界面）；`links/` 目录随 R4 静默忽略；**不做旧 SQLite 直接读取** | 旧仓库书籍/笔记/标签/附件全量导入且 UUID 不变（重复导入幂等）；tombstone 不产生幽灵数据；`ai_accepted` 标签照常迁入；链接数据按预期忽略 |
 
-原 M5（AI）阶段随 R2 取消，"画板与 AI 可并行"的说明随之失效。M0 仍是关键路径（宿主 IPC 通道 H1 是全局阻塞项）。
+原 M5（AI）阶段随 R2 取消，"画板与 AI 可并行"的说明随之失效。原全局阻塞项 H1 已随知识库模块落地（2c325f7），M0 的宿主侧改动只剩组合根两处注册。
 
 ---
 
 ## 13. 待决策问题清单
+
+> v0.7：本清单全部条目已决策或关闭，转为决策记录保留；后续新增问题在此追加。
 
 | # | 问题 | 选项与建议 |
 |---|---|---|
 | Q1 | ~~迁移方式确认~~ | **已决策（2026-10-03，按推荐）**：内置模块 + TS 重写（第 11 节） |
 | Q2 | ~~模块 id / 包名~~ | **已决策（2026-10-03，按推荐）**：`card-note`（`modules/card-note/`，`@reisa/module-card-note`，目录名即模块 id） |
 | Q3 | ~~API Key 存放~~ | **已随 R2 关闭**：模块内不再持有任何凭据 |
-| Q4 | renderer↔runtime 数据通道形态 | a) 通用模块 IPC 分发（`reisa/module/<id>/<command>`，一次扩展所有模块受益）；b) 逐模块专用通道。**倾向 a；完整方案对比见附录 C** |
-| Q5 | 实时刷新机制 | Drift watch 流的替代：a) 变更后由 runtime 推事件（复杂度高、体验最好）；b) 操作返回后前端主动刷新（简单，推荐先 b）；c) 定时轮询（兜底） |
-| Q6 | Git 同步是否随迁 | 功能完整可用但存在 D1–D3 缺陷；Electron 主进程可无障碍调 git。建议随迁但排最后（M5），并顺手补齐备份（D3） |
+| Q4 | renderer↔runtime 数据通道形态 | **已解决（v0.5 复核）**：知识库模块（2c325f7）已落地通用受限通道 `reisa/module/page` + `module/config` + `module/pickPath`，"组合根页面服务注册表 + 模块契约/客户端"模式定型；card-note 沿用，无需再二选一。详见附录 C.0 |
+| Q5 | ~~实时刷新机制~~ | **已关闭（v0.7，按推荐）**：沿用知识库模式——操作后主动刷新 + 5 秒轮询、无事件推送通道；未来出现性能需要再议事件通道 |
+| Q6 | ~~Git 同步是否随迁~~ | **已决策（v0.7）：随迁**，排最后（M5），顺手补齐导入前备份（D3）。技术依据：Electron 主进程经 child_process 调 git 无障碍；card-note 无原生依赖，不涉及 LanceDB 那类原生打包难题。**v0.6 设计更新继续有效**：同步配置存模块 settings.json（不用 SQLite 的 app_settings 表，见附录 A 注）；同步目录选择用已有的 `pickPath(openDirectory)` |
 | Q7 | ~~画板实现选型~~ | **已随 R3 关闭** |
-| Q8 | LaTeX 支持等级 | katex 全量 vs 按需；确认笔记中公式使用频率后再定（M2 再决策） |
-| Q9 | 旧数据迁移 | 是否提供 card_note.sqlite 一键导入（建议提供，M6；schema 兼容使成本低）。注意跳过旧库 AI 表与 `note_links`（见 R2/R4）；旧库中 `ai_accepted` 来源的标签已是正式标签，随标签一起迁移 |
-| Q10 | 模块能力注册范围 | AI 移除后，若将来需要笔记智能（自动标签/关联/问答），推荐走宿主主 Agent 能力注册路径（只读检索类能力先行），不在模块内重建私有 AI 栈；首版仍建议不注册 |
-| Q11 | 搜索方案 | node:sqlite 的 LIKE 起步（与现状等价）；FTS5 需验证 Node 内置 SQLite 是否编译了 FTS5 模块，不作为首版依赖 |
-| Q12 | 迁移期间 card_note 仓库的角色 | 冻结只读作为参考，还是继续演进？（建议冻结，避免规则真源漂移） |
+| Q8 | ~~LaTeX 支持等级~~ | **已决策（M2 实施时）**：采用全量 katex（`katex/dist/katex.min.css` 随模块打包，桌面端体积可接受）；remark-math + rehype-katex 接入 react-markdown，行内/块级公式均已验证 |
+| Q9 | ~~旧数据迁移~~ | **已决策（v0.7，方案变更）**：不做旧 SQLite 一键导入；改为**配置旧应用的 Git 同步仓库地址直接导入**——输入旧仓库 URL + 本地克隆目录 → clone → `readAndValidate` → `importDocuments`（即 card_note `SyncCoordinator.cloneAndImport` 流程的移植，复用 M5 的 GitClient/SyncDocument/validator/importer 组件）。要点：`links/` 目录随 R4 被校验器静默忽略；实体 UUID/时间戳/contentRevision 原样保留（重复导入幂等）；含 tombstone 的旧仓库不产生幽灵数据；`ai_accepted` 标签照常迁入。**依赖 M5 组件，建议 M5 先做**（或与 M5 合并实施）；同步配置由用户在新模块中重新填写 |
+| Q10 | ~~模块能力注册范围~~ | **已关闭（v0.7，按推荐）**：首版不注册 Agent 能力。知识库先例（只读检索进能力、管理操作走页面服务）已留档，将来如需（含笔记智能）按同模式注册只读检索类能力，管理面绝不注册 |
+| Q11 | 搜索方案 | **v0.6 实测关闭**：Node 22.22.2 的 node:sqlite 已编译 FTS5（fts5 虚拟表与 MATCH 实测可用）。但 FR-11 的语义是**子串匹配**，FTS5 是分词匹配（默认 unicode61 分词器不切中文），不是等价替换——维持 LIKE（单书 2,000 条规模足够、语义与源一致）；FTS5 仅作为未来"全书级/分词搜索"的候选，不是本模块需求 |
+| Q12 | ~~迁移期间 card_note 仓库的角色~~ | **已关闭（v0.7，按推荐）**：card_note 仓库以 HEAD `2828a86` 冻结为只读参考基线；其后续新特性（如原文富文本编辑）若要跟进迁移，逐项走第 9 节式的偏差/增补记录，不无声追平 |
 
 ---
 
 ## 附录 A：迁移目标库 DDL 草案（node:sqlite，源 schema v3 精简版）
 
-> 迁移目标库不含 `ai_tag_suggestions`、`ai_jobs`（R1/R2）与 `note_links`（R4），可直接以 schema v1 起步（`schemaVersion = 1`），无需复刻源项目的 v1→v3 迁移路径；其余表结构与约束与源项目逐字段等价，以支撑 M6 旧库直接导入。M6 导入时旧库的 `ai_jobs`/`ai_tag_suggestions`/`note_links` 被跳过，`note_tags.source` 中的 `ai_accepted` 值原样保留（仅作来源标记）。
+> 迁移目标库不含 `ai_tag_suggestions`、`ai_jobs`（R1/R2）与 `note_links`（R4），可直接以 schema v1 起步（`schemaVersion = 1`），无需复刻源项目的 v1→v3 迁移路径；其余表结构与约束与源项目逐字段等价，以支撑 M6 经旧 Git 同步仓库直接导入。**v0.6/v0.7**：`app_settings` 同样不建——AI 移除后其唯一剩余用途是同步配置，而宿主模块的标准配置位置是 `app-data/modules/card-note/settings.json`（`ModuleConfigScope`，知识库模块同模式）；同步配置由用户在新模块中重新填写（Q9 的旧仓库导入只迁业务数据，不经旧 SQLite）。
 
 ```sql
 PRAGMA foreign_keys = ON;
@@ -589,8 +596,7 @@ CREATE TABLE IF NOT EXISTS note_tags (
 
 -- note_links（R4）与 ai_tag_suggestions / ai_jobs（R1/R2）：不建表。
 
-CREATE TABLE IF NOT EXISTS app_settings (
-  key TEXT PRIMARY KEY, value TEXT);
+-- app_settings：v0.6 建议不建表——同步配置存模块 settings.json（ModuleConfigScope）。
 
 CREATE TABLE IF NOT EXISTS sync_outbox (
   entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
@@ -612,7 +618,28 @@ CREATE TABLE IF NOT EXISTS sync_outbox (
 
 ## 附录 C：Q4 数据通道方案对比（renderer ↔ 模块 runtime）
 
-### C.1 问题的由来
+### C.0 v0.5 复核：该问题已由知识库模块在代码中终结
+
+2026-10-03 提交 2c325f7（知识库模块）已按本附录讨论的方向实现了宿主通用机制，**Q4 不再是待决问题**。实际落地形态（对照 C.2/C.3 的划分，属于"传输同方案 a、校验位置不同于 a"的第三形态）：
+
+| 通道 | 用途 |
+|---|---|
+| `reisa/module/page` | 页面服务分发：`{moduleId, action, input}` → 组合根注册表（`getModulePageService`）→ 模块 runtime 的 pageService（action 白名单为 runtime 内 switch）。主进程校验模块 `host.getState(moduleId) === 'active'` 与服务存在；错误归一为 `{ok, value\|error:{code,message}}`（CAPABILITY_UNAVAILABLE / EXECUTION_FAILED） |
+| `reisa/module/config/get` \| `set` | 模块私有 settings.json 读写（与 `ModuleConfigScope` 同一存储）。注意：知识库的设置面板实际走页面动作 `get_config`/`update_config`，此通道**目前没有调用方**——card-note 二选一即可，建议与知识库一致走页面动作，少一条路径依赖 |
+| `reisa/module/pickPath` | Electron dialog 封装（openDirectory/openFile）。**尚无保存对话框**，card-note M4 导出前需在宿主补 `pickSavePath` 或扩展 mode（届时的小改动） |
+
+关键事实与对原分析的修正：
+
+1. **宿主只付了一次成本**：main/index.ts、preload、bridge 三处通用通道；`ModuleHost` 与 module-sdk 均未为页面服务扩展（module-sdk 仅给 `ModuleSettingsProps` 加了 `close?`）。check-boundaries 相应放宽：模块**测试**代码允许 import `@reisa/module-host`（端到端装配验证），运行时代码仍只依赖 SDK。
+2. **模块侧四件套**（card-note 直接照抄知识库模式）：`contracts.ts`（TypeBox 契约，当前用于能力定义）→ runtime `pageService()`（action switch，工厂经 `registerPageService` 回调登记）→ 组合根 `RUNTIME_MODULES` 条目 → `ui/client.ts` 类型化客户端（含"仅桌面内可用"的降级提示）。
+3. **页面服务通道没有 TypeBox 强校验**：action 载荷在 runtime 内手工 `String()/Number()` 转换（与能力通道的 `Value.Check` 不同）。card-note 页面动作较多（书籍/笔记/标签/附件/导出/同步约 20 个），建议在页面服务入口按 contracts 中定义的 Schema 统一校验一次——纯模块内纪律，零宿主改动。
+4. **类型世界二分**：能力契约（contracts.ts）与页面服务结构（client.ts 内手写 JSON 类型）在知识库模块是两套并行类型。card-note 应尽量单一真源，避免 UI 类型与 runtime 输出漂移。
+5. **安全分层沿用**：管理面操作只走页面服务，绝不注册为 Agent 能力（宿主 `listEnabledCapabilities()` 无筛选，注册即对模型全量可见——知识库迁移文档 §5.3/§8.1）。card-note 首版不注册能力（Q10），天然满足。
+6. **无事件推送通道**：知识库页面的刷新 = 操作后主动 refresh + 5 秒轮询。这是 Q5 的实践基准，card-note 沿用；将来若需要变更推送，再议同族事件通道。
+
+C.1–C.4 的原始对比保留作背景：方案 b（逐模块专用通道）已被代码证伪，不再考虑；方案 a 中"经 module-host 注册命令面"的设想未被采纳，取而代之的是更轻的组合根注册表。
+
+### C.1 问题的由来（历史背景，现状以 C.0 为准）
 
 宿主把一个模块拆成两半，运行在两个进程里：
 
@@ -672,6 +699,11 @@ CREATE TABLE IF NOT EXISTS sync_outbox (
 ### C.4 结论与关联
 
 **推荐 a。** 决定性理由：宿主自身的架构承诺 + 模块数量预期 + 校验集中。配套纪律：UI 命令的输入/输出 Schema 设为强制，运行时校验兜住跨进程漂移；命令粒度保持粗（查询类合并成少数命令），避免通道数量膨胀。
+
+两条补充约束：
+
+- **安全姿态演进**：preload 现行注释"不暴露通用 IPC"需修订为"不暴露通用 IPC，但暴露经宿主校验的模块命令分发"——`module.call` 是模块无关的，`window.reisa` 永远不出现具体模块名；该策略变化应同步记入 docs/architecture.md 的边界章节。信任边界并未扩大：renderer 是第一方代码，现行专用通道同样全部暴露给同一 renderer，真正的数据隔离由主进程保证（每个模块的命令处理器只闭包引用自己的 `context.storage`）。
+- **大二进制约定**：附件/导出等文件类操作只传**路径**——renderer 经 H2 对话框取得源路径或保存路径后，作为命令输入传入，runtime 在主进程侧读写文件；图片字节不走 JSON 通道。card_note 的 `AttachmentRepository.addFromPath` 本就按路径实现，可直译。命令输入建议统一限制 JSON ≤ 1MB。
 
 与 Q5 的关系：a 的 call 通道天然支持 Q5 方案 b（操作返回后主动刷新）先落地；将来升级 Q5 方案 a（变更推送）时在同一通道族上加事件通道即可，无需返工。
 

@@ -21,6 +21,7 @@
   "devDependencies": {
     "@reisa/agent-adapter": "workspace:*",
     "@reisa/foundation": "workspace:*",
+    "@reisa/module-card-note": "workspace:*",
     "@reisa/module-host": "workspace:*",
     "@reisa/module-knowledge": "workspace:*",
     "@reisa/module-sdk": "workspace:*",

@@ -121,7 +121,8 @@ export interface ReisaBridge {
       action: string,
       input?: unknown,
     ): Promise<ReisaModulePageResult<T>>;
-    pickPath(mode: 'directory' | 'file'): Promise<string | null>;
+    pickPath(mode: 'directory' | 'file', extensions?: string[]): Promise<string | null>;
+    pickSavePath(suggestedName?: string, extensions?: string[]): Promise<string | null>;
   };
   /** 模块私有配置（模块自己的 settings.json，与 ModuleConfigScope 同一存储）。 */
   moduleConfig: {

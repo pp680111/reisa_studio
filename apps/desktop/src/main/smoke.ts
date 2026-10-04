@@ -103,7 +103,18 @@ export async function runSmoke(): Promise<void> {
       '知识库模块应处于激活状态',
     );
 
-    assert.deepEqual(errors, []);
+    // 内置卡片笔记模块（v1 不注册能力，决策 Q10）：激活状态 + 页面服务可用
+    assert.ok(
+      moduleStates.some((module) => module.id === 'card-note' && module.state === 'active'),
+      `卡片笔记模块应处于激活状态，实际：${JSON.stringify(moduleStates)}`,
+    );
+    const cardNoteStats = (await window.webContents.executeJavaScript(
+      "window.reisa.modulePage.invoke('card-note', 'get_stats')",
+    )) as { ok: boolean; value?: { books: number; notes: number; tags: number } };
+    assert.equal(cardNoteStats.ok, true, '卡片笔记页面服务应可用');
+    assert.deepEqual(cardNoteStats.value, { books: 0, notes: 0, tags: 0 });
+
+    assert.deepEqual(errors, [], `渲染进程不应有 error 级 console 消息：${JSON.stringify(errors)}`);
     console.log(
       'Electron smoke passed:',
       JSON.stringify({ ...state, conversations, capabilityIds }),

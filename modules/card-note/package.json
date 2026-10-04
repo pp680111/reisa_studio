@@ -1,0 +1,25 @@
+{
+  "name": "@reisa/module-card-note",
+  "version": "0.1.0",
+  "private": true,
+  "description": "卡片笔记模块：本地优先的阅读笔记卡片（迁移自 card_note）",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./runtime": "./runtime/index.ts"
+  },
+  "dependencies": {
+    "@reisa/module-sdk": "workspace:*",
+    "@reisa/ui": "workspace:*",
+    "katex": "^0.16.11",
+    "react": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
+  },
+  "devDependencies": {
+    "@reisa/module-host": "workspace:*",
+    "@types/react": "^19.0.0"
+  }
+}

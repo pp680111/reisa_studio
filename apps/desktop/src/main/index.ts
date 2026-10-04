@@ -290,15 +290,38 @@ function registerIpc(): void {
     },
   );
 
-  // 宿主目录/文件选择对话框（模块页面经受限通道触发，添加本地来源用）。
+  // 宿主目录/文件选择对话框（模块页面经受限通道触发，添加本地来源/附件用）。
+  // extensions 为可选的文件类型白名单（如 ['png','jpg']），透传给系统对话框过滤。
   ipcMain.handle(
     'reisa/module/pickPath',
-    async (_event, payload: { mode: 'directory' | 'file' }) => {
+    async (_event, payload: { mode: 'directory' | 'file'; extensions?: string[] }) => {
       const result = await dialog.showOpenDialog({
         properties: [payload.mode === 'directory' ? 'openDirectory' : 'openFile'],
+        filters:
+          payload.extensions !== undefined && payload.extensions.length > 0
+            ? [{ name: '文件', extensions: payload.extensions }]
+            : undefined,
       });
       if (result.canceled || result.filePaths.length === 0) return null;
       return result.filePaths[0] ?? null;
+    },
+  );
+
+  // 宿主保存文件对话框（模块页面经受限通道触发，导出落盘用）。
+  // 返回用户确认的目标路径；模块 runtime 只允许写入该路径。
+  ipcMain.handle(
+    'reisa/module/pickSavePath',
+    async (_event, payload: { suggestedName?: string; extensions?: string[] }) => {
+      const result = await dialog.showSaveDialog({
+        defaultPath: payload.suggestedName,
+        filters:
+          payload.extensions !== undefined && payload.extensions.length > 0
+            ? [{ name: '文件', extensions: payload.extensions }]
+            : undefined,
+        properties: ['createDirectory', 'showOverwriteConfirmation'],
+      });
+      if (result.canceled || result.filePath === undefined) return null;
+      return result.filePath;
     },
   );
 }

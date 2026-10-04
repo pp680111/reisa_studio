@@ -15,6 +15,7 @@ import { createOpenAICompatibleModel, type ProviderConnectionConfig } from '@rei
 import type { JsonValue, ModuleConfigScope } from '@reisa/module-sdk';
 import type { LanguageModel } from 'ai';
 import { createKnowledgeRuntime } from '@reisa/module-knowledge/runtime';
+import { createCardNoteRuntime } from '@reisa/module-card-note/runtime';
 
 // Electron 主进程内为 safeStorage API；纯 Node（测试）下 electron 包导出二进制路径，无此 API
 const safeStorage = (
@@ -87,6 +88,15 @@ const RUNTIME_MODULES: readonly {
       createKnowledgeRuntime({
         registerPageService: (invoke) => {
           modulePageServices.set('knowledge', invoke);
+        },
+      }),
+  },
+  {
+    id: 'card-note',
+    create: () =>
+      createCardNoteRuntime({
+        registerPageService: (invoke) => {
+          modulePageServices.set('card-note', invoke);
         },
       }),
   },
