@@ -9,7 +9,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Type } from '@sinclair/typebox';
 import { ModuleHost } from '@reisa/module-host';
-import { createKnowledgeRuntime } from '../runtime/index.ts';
+import { createKnowledgeRuntime, toDocumentInfo } from '../runtime/index.ts';
+import { MetadataDB } from '../runtime/db.ts';
+import { ChunkStore } from '../runtime/store.ts';
 
 const invocation = (invocationId) => ({ invocationId, signal: new AbortController().signal });
 
@@ -22,7 +24,17 @@ async function waitFor(predicate, timeoutMs = 10_000) {
   }
 }
 
-async function makeHost() {
+/** 断言元数据库连接已关闭（关闭后任何查询都会抛错）。 */
+function assertClosed(database, message) {
+  assert.throws(() => database.listSources(), /open|closed/i, message);
+}
+
+/** 断言元数据库连接仍打开且可查询。 */
+function assertOpen(database, message) {
+  assert.ok(Array.isArray(database.listSources()), message);
+}
+
+async function makeHost(runtimeOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), 'kb-runtime-'));
   const host = new ModuleHost({ storageRoot: root });
   let pageService;
@@ -30,6 +42,7 @@ async function makeHost() {
     registerPageService: (invoke) => {
       pageService = invoke;
     },
+    ...runtimeOptions,
   });
   host.register(runtime);
   await host.activate('knowledge');
@@ -246,4 +259,209 @@ test('输出 Schema 校验：结果不符声明报 EXECUTION_FAILED', async () =
   assert.equal(result.error?.code, 'EXECUTION_FAILED');
   await host.deactivate('fake');
   await rm(root, { recursive: true, force: true });
+});
+
+test('update_config 重配置失败：旧服务完整存活、模块保持 active、部分新资源已清理', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'kb-rollback-'));
+  const host = new ModuleHost({ storageRoot: root });
+  let pageService;
+  const databases = [];
+  let failStoreOpen = false;
+  const runtime = createKnowledgeRuntime({
+    registerPageService: (invoke) => {
+      pageService = invoke;
+    },
+    // 记录每次建库实例，用于观察新旧资源的关闭时序
+    createDatabase: (path) => {
+      const database = new MetadataDB(path);
+      databases.push(database);
+      return database;
+    },
+    // 首次激活走真实 LanceDB；重配置阶段注入打开失败
+    openChunkStore: async (path, dimensions) => {
+      if (failStoreOpen) throw new Error('向量库打开失败（注入）');
+      return ChunkStore.open(path, dimensions);
+    },
+  });
+  host.register(runtime);
+  await host.activate('knowledge');
+  try {
+    assert.equal(databases.length, 1, '初始激活只建一次库');
+    await pageService('upload_file', { filename: 'keep.md', content: '# 标题\n\n重配置后仍在' });
+    assert.ok(
+      await waitFor(async () => (await pageService('list_documents', {})).total >= 1),
+      '上传文档应先被记录',
+    );
+
+    const config = await pageService('get_config', {});
+    failStoreOpen = true;
+    await assert.rejects(
+      () => pageService('update_config', { settings: { ...config, syncIntervalSeconds: 90 } }),
+      /向量库打开失败/,
+      '设置页动作收到明确错误',
+    );
+
+    assert.equal(host.getState('knowledge'), 'active', '初始化失败后模块在宿主侧仍为 active');
+    assert.equal((await pageService('get_config', {})).syncIntervalSeconds, 600, '运行时配置未变');
+
+    // 旧服务完整存活：工具继续工作、旧库仍可查询、文档数据未丢
+    const search = await host.invoke(
+      'knowledge/search',
+      { query: '重配置后仍在' },
+      invocation('inv-rb'),
+    );
+    assert.equal(search.status, 'success');
+    assert.equal((await pageService('list_documents', {})).total, 1);
+    assertOpen(databases[0], '旧元数据库仍打开');
+
+    // 部分建好的新元数据库已被清理（关闭）
+    assert.equal(databases.length, 2, '重配置尝试建过一次新库');
+    assertClosed(databases[1], '半成品新库已关闭');
+  } finally {
+    await host.deactivate('knowledge').catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('update_config 重配置成功：旧资源释放、新配置生效、切换期间的工具调用正常完成', async () => {
+  const databases = [];
+  const { host, pageService, cleanup } = await makeHost({
+    createDatabase: (path) => {
+      const database = new MetadataDB(path);
+      databases.push(database);
+      return database;
+    },
+  });
+  const service = pageService();
+  try {
+    await service('upload_file', { filename: 'swap.md', content: '# 标题\n\n切换期间检索' });
+    assert.ok(
+      await waitFor(async () => (await service('list_documents', {})).total >= 1),
+      '上传文档应先被记录',
+    );
+
+    const config = await service('get_config', {});
+    // 与重配置并发发起的工具调用：要么完整走旧服务、要么完整走新服务，都必须正常完成
+    const [search, updated] = await Promise.all([
+      host.invoke('knowledge/search', { query: '切换期间检索' }, invocation('inv-swap')),
+      service('update_config', { settings: { ...config, syncIntervalSeconds: 45 } }),
+    ]);
+    assert.equal(search.status, 'success', '切换期间的工具调用不出现"未激活"类失败');
+    assert.equal(updated.syncIntervalSeconds, 45, '重配置返回新配置');
+    assert.equal((await service('get_config', {})).syncIntervalSeconds, 45, '新配置生效');
+
+    // 切换完成后旧资源全部释放，新服务可用
+    assert.ok(databases.length >= 2, '重配置建了新库');
+    assertClosed(databases[0], '旧元数据库已释放');
+    const after = await host.invoke(
+      'knowledge/search',
+      { query: '切换期间检索' },
+      invocation('inv-after'),
+    );
+    assert.equal(after.status, 'success');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('重叠的 update_config 串行执行，返回值不交错', async () => {
+  const { pageService, cleanup } = await makeHost();
+  const service = pageService();
+  try {
+    const config = await service('get_config', {});
+    const [first, second] = await Promise.all([
+      service('update_config', { settings: { ...config, syncIntervalSeconds: 60 } }),
+      service('update_config', { settings: { ...config, syncIntervalSeconds: 3600 } }),
+    ]);
+    assert.equal(first.syncIntervalSeconds, 60, '第一次保存返回其自身配置，未被第二次交错覆盖');
+    assert.equal(second.syncIntervalSeconds, 3600);
+    assert.equal(
+      (await service('get_config', {})).syncIntervalSeconds,
+      3600,
+      '最终配置为最后一次保存',
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+test('toDocumentInfo 公开 DTO：error 字段不含绝对路径（含历史数据防御）', () => {
+  const info = toDocumentInfo({
+    id: 'doc-1',
+    sourceId: 'src-1',
+    relPath: 'secret.md',
+    name: 'secret.md',
+    contentHash: null,
+    status: 'error',
+    error: "ENOENT: no such file or directory, open 'C:\\Users\\zst\\secret.md'",
+    chunkCount: 0,
+    size: 10,
+    mtimeNs: 0n,
+    indexedAt: null,
+  });
+  assert.equal(info.status, 'error');
+  assert.ok(!info.error.includes('C:'), '不含盘符');
+  assert.ok(!info.error.includes('Users'), '不含目录段');
+  assert.ok(!info.error.includes('\\'), '不含路径分隔符');
+  assert.match(info.error, /secret\.md/, '保留错误类别与文件名');
+  assert.deepEqual(
+    toDocumentInfo({
+      id: 'doc-2',
+      sourceId: 'src-1',
+      relPath: 'ok.md',
+      name: 'ok.md',
+      contentHash: null,
+      status: 'indexed',
+      error: null,
+      chunkCount: 0,
+      size: 0,
+      mtimeNs: 0n,
+      indexedAt: null,
+    }),
+    { id: 'doc-2', name: 'ok.md', status: 'indexed', error: null },
+    '成功文档 error 保持 null',
+  );
+});
+
+test('uploadMaxBytes 重配置后生效：页面上传与 Agent 工具两条入口共用同一校验', async () => {
+  const { host, pageService, cleanup } = await makeHost();
+  const service = pageService();
+  try {
+    const config = await service('get_config', {});
+    await service('update_config', { settings: { ...config, uploadMaxBytes: 8 } });
+
+    // 页面入口 upload_file：超限被拒（错误经页面桥接原样展示）
+    await assert.rejects(
+      () => service('upload_file', { filename: 'page.md', content: 'a'.repeat(10) }),
+      (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.match(message, /超过大小上限/);
+        assert.match(message, /10/);
+        assert.match(message, /8/);
+        return true;
+      },
+    );
+
+    // Agent 工具入口 upload_document：同一 service.upload 校验同样拒绝，
+    // upload_too_large 按既有 ServiceError 模式映射为 INVALID_INPUT
+    const tool = await host.invoke(
+      'knowledge/upload_document',
+      { filename: 'agent.md', content: 'b'.repeat(10) },
+      invocation('inv-big'),
+    );
+    assert.equal(tool.status, 'error');
+    assert.equal(tool.error?.code, 'INVALID_INPUT');
+    assert.match(tool.error?.message ?? '', /超过大小上限/);
+
+    // 恰好等于上限放行（字节语义）
+    const exact = await host.invoke(
+      'knowledge/upload_document',
+      { filename: 'exact.md', content: 'c'.repeat(8) },
+      invocation('inv-exact'),
+    );
+    assert.equal(exact.status, 'success');
+    assert.equal(exact.value?.status, 'queued');
+  } finally {
+    await cleanup();
+  }
 });

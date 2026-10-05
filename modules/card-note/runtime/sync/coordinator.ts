@@ -49,6 +49,11 @@ export function backupDatabase(database: CardNoteDatabase): string {
   return destination;
 }
 
+/** 阶段边界取消检查：被取消的同步不得继续后续阶段（尤其写库与备份，架构设计 §10.2）。 */
+function assertLive(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error('同步已取消');
+}
+
 export class SyncCoordinator {
   readonly #database: CardNoteDatabase;
   readonly #attachments: AttachmentStore;
@@ -72,11 +77,16 @@ export class SyncCoordinator {
   }
 
   /** 初始化新仓库：空目录 init + 全量快照播种。 */
-  async initializeNewWorkspace(input: { workspacePath: string; remoteUrl: string }): Promise<void> {
+  async initializeNewWorkspace(
+    input: { workspacePath: string; remoteUrl: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    assertLive(signal);
     this.#logger.info('开始初始化同步仓库');
     const settings = await loadSyncSettings(this.#config);
-    await this.#git.verifyAvailable();
-    await this.#git.initialize(input.workspacePath, settings.deviceId, input.remoteUrl);
+    await this.#git.verifyAvailable(signal);
+    await this.#git.initialize(input.workspacePath, settings.deviceId, input.remoteUrl, signal);
+    assertLive(signal);
     // 旧版本升级而来的空 outbox 无法靠增量补齐依赖（尤其 note-tag 引用的标签），播种全量。
     exportSnapshot(this.#database, input.workspacePath, settings.deviceId);
     await saveSyncConnection(this.#config, {
@@ -87,17 +97,25 @@ export class SyncCoordinator {
   }
 
   /** 克隆已有仓库并导入。仅当本地库为空或已有备份时安全（源 cloneAndImport 同样约定）。 */
-  async cloneAndImport(input: { remoteUrl: string; workspacePath: string }): Promise<number> {
+  async cloneAndImport(
+    input: { remoteUrl: string; workspacePath: string },
+    signal?: AbortSignal,
+  ): Promise<number> {
+    assertLive(signal);
     this.#logger.info('开始克隆并导入同步仓库');
     const settings = await loadSyncSettings(this.#config);
-    await this.#git.verifyAvailable();
-    if (existsSync(input.workspacePath) && (await this.#git.isRepository(input.workspacePath))) {
+    await this.#git.verifyAvailable(signal);
+    if (
+      existsSync(input.workspacePath) &&
+      (await this.#git.isRepository(input.workspacePath, signal))
+    ) {
       // 上次尝试可能克隆成功但导入失败：复用已克隆的干净工作区重试。
-      await this.#git.setRemote(input.workspacePath, input.remoteUrl);
-      await this.#git.fetchAndRebase(input.workspacePath);
+      await this.#git.setRemote(input.workspacePath, input.remoteUrl, signal);
+      await this.#git.fetchAndRebase(input.workspacePath, signal);
     } else {
-      await this.#git.clone(input.remoteUrl, input.workspacePath, settings.deviceId);
+      await this.#git.clone(input.remoteUrl, input.workspacePath, settings.deviceId, signal);
     }
+    assertLive(signal); // 取消后不再校验、备份或写库
     const documents = readAndValidate(input.workspacePath);
     backupDatabase(this.#database);
     importDocuments(this.#database, this.#attachments, documents, input.workspacePath);
@@ -105,13 +123,14 @@ export class SyncCoordinator {
       workspacePath: input.workspacePath,
       remoteUrl: input.remoteUrl,
     });
-    await saveSyncLastSyncedHead(this.#config, await this.#git.head(input.workspacePath));
+    await saveSyncLastSyncedHead(this.#config, await this.#git.head(input.workspacePath, signal));
     this.#logger.info(`克隆并导入完成（文档数=${documents.length}）`);
     return documents.length;
   }
 
-  /** 唯一支持的写序；Git 错误保留 outbox，下次成功运行可安全重试。 */
-  async synchronize(): Promise<SyncRunResult> {
+  /** 唯一支持的写序；Git 错误保留 outbox，下次成功运行可安全重试。取消在各阶段边界生效。 */
+  async synchronize(signal?: AbortSignal): Promise<SyncRunResult> {
+    assertLive(signal);
     if (this.#running) throw new Error('同步正在进行中');
     this.#running = true;
     try {
@@ -120,28 +139,32 @@ export class SyncCoordinator {
       if (!isConfigured(settings)) throw new Error('请先配置同步仓库目录');
       if (settings.remoteUrl.trim() === '') throw new Error('请先配置 Git 远端地址');
       const workspacePath = settings.workspacePath;
-      if (!(await this.#git.isRepository(workspacePath))) {
+      if (!(await this.#git.isRepository(workspacePath, signal))) {
         throw new Error('同步目录不是 Git 仓库，请先初始化或克隆仓库');
       }
 
-      const remoteExists = await this.#git.remoteMainExists(workspacePath);
+      const remoteExists = await this.#git.remoteMainExists(workspacePath, signal);
+      assertLive(signal);
       const exportResult = exportPendingChanges(this.#database, workspacePath, settings.deviceId);
       const createdCommit = await this.#git.stageAndCommit(
         workspacePath,
         `Card Note sync: ${exportResult.documentCount} changes`,
+        signal,
       );
 
       if (remoteExists) {
-        await this.#git.fetchAndRebase(workspacePath);
+        await this.#git.fetchAndRebase(workspacePath, signal);
       }
+      assertLive(signal); // 取消后不再校验、备份或写库
       const documents = readAndValidate(workspacePath);
       backupDatabase(this.#database);
       const imported = importDocuments(this.#database, this.#attachments, documents, workspacePath);
-      await this.#git.pushMain(workspacePath, !remoteExists);
+      await this.#git.pushMain(workspacePath, !remoteExists, signal);
+      assertLive(signal); // 取消后不确认 outbox：下次同步安全重导（按内容幂等）
       if (exportResult.changes !== undefined) {
         this.#database.acknowledgeSyncChanges(exportResult.changes);
       }
-      const head = await this.#git.head(workspacePath);
+      const head = await this.#git.head(workspacePath, signal);
       await saveSyncLastSyncedHead(this.#config, head);
       this.#logger.info(
         `同步完成（导出=${exportResult.documentCount}，导入=${imported.documentCount}，提交=${createdCommit}）`,
@@ -199,6 +222,8 @@ export class SyncScheduler {
   readonly #logger: SyncCoordinatorLogger;
   #timer: NodeJS.Timeout | null = null;
   #running = false;
+  #disposed = false;
+  #inFlight: Promise<void> = Promise.resolve();
 
   constructor(input: {
     database: CardNoteDatabase;
@@ -222,7 +247,7 @@ export class SyncScheduler {
       this.#timer = null;
     }
     const settings = await loadSyncSettings(this.#config);
-    if (!settings.autoSync || !isConfigured(settings)) return;
+    if (this.#disposed || !settings.autoSync || !isConfigured(settings)) return;
     this.#timer = setInterval(
       () => {
         void this.runIfNeeded();
@@ -234,26 +259,37 @@ export class SyncScheduler {
   }
 
   async runIfNeeded(): Promise<void> {
-    if (this.#running) return;
+    if (this.#disposed || this.#running) return;
     const settings = await loadSyncSettings(this.#config);
-    if (!settings.autoSync || !isConfigured(settings)) return;
+    // 等待设置期间可能已停用：不启动新同步
+    if (this.#disposed || !settings.autoSync || !isConfigured(settings)) return;
     if (this.#database.getPendingSyncChanges().length === 0) return;
     this.#running = true;
-    try {
-      this.#logger.info('后台自动同步开始');
-      await this.#synchronize();
-      this.#logger.info('后台自动同步完成');
-    } catch (error) {
-      // outbox 原样保留，下个间隔重试；UI 发起的同步会把真实错误呈现给用户。
-      this.#logger.error(
-        `后台自动同步失败，将在下次间隔重试：${error instanceof Error ? error.message : String(error)}`,
-      );
-    } finally {
-      this.#running = false;
-    }
+    const run = (async () => {
+      try {
+        this.#logger.info('后台自动同步开始');
+        await this.#synchronize();
+        this.#logger.info('后台自动同步完成');
+      } catch (error) {
+        // outbox 原样保留，下个间隔重试；UI 发起的同步会把真实错误呈现给用户。
+        this.#logger.error(
+          `后台自动同步失败，将在下次间隔重试：${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        this.#running = false;
+      }
+    })();
+    this.#inFlight = run;
+    await run;
+  }
+
+  /** 等待在途的后台同步真正结束（模块停用时先等待再释放资源，架构设计 §10.2）。 */
+  async waitForIdle(): Promise<void> {
+    await this.#inFlight;
   }
 
   dispose(): void {
+    this.#disposed = true;
     if (this.#timer !== null) {
       clearInterval(this.#timer);
       this.#timer = null;

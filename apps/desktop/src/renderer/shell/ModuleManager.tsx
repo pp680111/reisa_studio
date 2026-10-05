@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ModuleContribution } from '@reisa/module-sdk';
 import { Badge, Button, Icon, PageHeading } from '@reisa/ui';
+import { isTransitioning } from './moduleRuntime';
 export function ModuleManager({
   modules,
   enabled,
@@ -42,59 +43,74 @@ export function ModuleManager({
               .toLocaleLowerCase()
               .includes(query.toLocaleLowerCase()),
           )
-          .map((module) => (
-            <article className="module-card" key={module.id}>
-              <div className="module-card-top">
-                <span className="module-symbol">
-                  <Icon name={module.navigation?.icon ?? 'layers'} size={25} />
-                </span>
-                <button
-                  className="switch"
-                  role="switch"
-                  aria-label={`${enabled.includes(module.id) ? '停用' : '启用'}${module.name}`}
-                  aria-checked={enabled.includes(module.id)}
-                  onClick={() => toggle(module.id)}
-                >
-                  <span />
-                </button>
-              </div>
-              <h2>
-                {module.name}
-                <Badge>{module.source === 'builtin' ? '内置' : '外部'}</Badge>
-                {runtimeStates && (
-                  <Badge>
-                    {runtimeStates[module.id]?.state === 'active'
-                      ? '运行中'
-                      : runtimeStates[module.id]?.state === 'failed'
-                        ? '运行异常'
-                        : runtimeStates[module.id]
-                          ? '已接入运行时'
-                          : '界面原型'}
-                  </Badge>
+          .map((module) => {
+            const status = runtimeStates?.[module.id];
+            const busy = isTransitioning(status?.state);
+            return (
+              <article className="module-card" key={module.id}>
+                <div className="module-card-top">
+                  <span className="module-symbol">
+                    <Icon name={module.navigation?.icon ?? 'layers'} size={25} />
+                  </span>
+                  <button
+                    className="switch"
+                    role="switch"
+                    aria-label={`${enabled.includes(module.id) ? '停用' : '启用'}${module.name}`}
+                    aria-checked={enabled.includes(module.id)}
+                    disabled={busy}
+                    title={busy ? '模块正在切换运行状态' : undefined}
+                    onClick={() => toggle(module.id)}
+                  >
+                    <span />
+                  </button>
+                </div>
+                <h2>
+                  {module.name}
+                  <Badge>{module.source === 'builtin' ? '内置' : '外部'}</Badge>
+                  {runtimeStates && (
+                    <Badge>
+                      {status?.state === 'active'
+                        ? '运行中'
+                        : status?.state === 'failed'
+                          ? '运行异常'
+                          : status?.state === 'activating'
+                            ? '激活中'
+                            : status?.state === 'deactivating'
+                              ? '停用中'
+                              : status
+                                ? '已接入运行时'
+                                : '界面原型'}
+                    </Badge>
+                  )}
+                </h2>
+                <p>{module.description}</p>
+                {status?.state === 'failed' && status.error !== undefined && (
+                  <p className="muted" role="alert">
+                    {`运行异常：${status.error}`}
+                  </p>
                 )}
-              </h2>
-              <p>{module.description}</p>
-              <div className="module-card-meta">
-                <span>v{module.version}</span>
-                <span>{module.capabilities.length} 项能力声明</span>
-                <span className={enabled.includes(module.id) ? 'enabled-label' : ''}>
-                  {enabled.includes(module.id) ? '已启用' : '已停用'}
-                </span>
-              </div>
-              <div className="module-card-actions">
-                <Button variant="ghost" onClick={() => viewCapabilities(module.id)}>
-                  查看能力
-                  <Icon name="arrowRight" size={14} />
-                </Button>
-                {module.navigation && (
-                  <Button disabled={!enabled.includes(module.id)} onClick={() => open(module.id)}>
-                    打开工作空间
+                <div className="module-card-meta">
+                  <span>v{module.version}</span>
+                  <span>{module.capabilities.length} 项能力声明</span>
+                  <span className={enabled.includes(module.id) ? 'enabled-label' : ''}>
+                    {enabled.includes(module.id) ? '已启用' : '已停用'}
+                  </span>
+                </div>
+                <div className="module-card-actions">
+                  <Button variant="ghost" onClick={() => viewCapabilities(module.id)}>
+                    查看能力
                     <Icon name="arrowRight" size={14} />
                   </Button>
-                )}
-              </div>
-            </article>
-          ))}
+                  {module.navigation && (
+                    <Button disabled={!enabled.includes(module.id)} onClick={() => open(module.id)}>
+                      打开工作空间
+                      <Icon name="arrowRight" size={14} />
+                    </Button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
       </div>
       {modules.length > 0 &&
         !modules.some((module) =>

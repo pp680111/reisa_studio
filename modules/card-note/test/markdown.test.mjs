@@ -1,7 +1,7 @@
 /** Markdown 工具单测（tabularTextToMarkdown，迁移自 card_note markdown_text.dart）。 */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { tabularTextToMarkdown } from '../runtime/markdown.ts';
+import { tabularTextToMarkdown } from '../domain/markdown.ts';
 
 test('制表符文本转换为 Markdown 表格', () => {
   assert.equal(

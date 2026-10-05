@@ -1,6 +1,27 @@
 import type { JsonValue, ModuleActivation, ModuleContext, RuntimeModule } from '@reisa/module-sdk';
 import { basename, join } from 'node:path';
-import { MODULE_ID, MODULE_VERSION, PAGE_ACTIONS } from '../contracts.ts';
+import {
+  MODULE_ID,
+  MODULE_VERSION,
+  PAGE_ACTIONS,
+  type AttachmentJson,
+  type BookJson,
+  type CloneSyncResultJson,
+  type DeletedResultJson,
+  type ExportPreviewJson,
+  type ExportWrittenJson,
+  type ImportResultJson,
+  type InitializedResultJson,
+  type NoteJson,
+  type ProbeImageResultJson,
+  type ReadAttachmentResultJson,
+  type SavedResultJson,
+  type SaveNoteResultJson,
+  type StatsJson,
+  type SyncRunResultJson,
+  type SyncStatusJson,
+  type TagJson,
+} from '../contracts.ts';
 import {
   CardNoteDatabase,
   DomainError,
@@ -11,7 +32,7 @@ import {
 } from './database.ts';
 import { AttachmentStore, probeImage } from './attachments.ts';
 import { buildExport, importFromPath, writeExport } from './export.ts';
-import { validateQuote } from './validation.ts';
+import { validateQuote } from '../domain/validation.ts';
 import { GitClient } from './sync/git-client.ts';
 import { SyncCoordinator, SyncScheduler, type SyncCoordinatorLogger } from './sync/coordinator.ts';
 import {
@@ -32,9 +53,20 @@ import {
 export interface CreateCardNoteRuntimeOptions {
   /** 组合根注入：注册本模块的页面服务（受限 IPC `reisa/module/page` 使用）。 */
   readonly registerPageService?: (invoke: PageServiceInvoke) => void;
+  /** 测试注入：替代默认的系统 Git 封装（生产不传，走系统 git）。 */
+  readonly createGitClient?: () => GitClient;
 }
 
-export type PageServiceInvoke = (action: string, input: JsonValue) => Promise<JsonValue>;
+/** 页面服务调用上下文：信号与模块停用关联，宿主停用即取消（架构设计 §10.2）。 */
+export interface PageServiceContext {
+  readonly signal?: AbortSignal;
+}
+
+export type PageServiceInvoke = (
+  action: string,
+  input: JsonValue,
+  context?: PageServiceContext,
+) => Promise<JsonValue>;
 
 interface CardNoteRuntimeServices {
   readonly database: CardNoteDatabase;
@@ -51,6 +83,13 @@ export class CardNoteRuntime implements RuntimeModule {
 
   #context: ModuleContext | undefined;
   #services: CardNoteRuntimeServices | undefined;
+  /** 同步取消源：停用时先于资源释放向在途同步传递取消（架构设计 §10.2）。 */
+  #syncCancellation: AbortController | undefined;
+  readonly #createGitClient: (() => GitClient) | undefined;
+
+  constructor(createGitClient?: () => GitClient) {
+    this.#createGitClient = createGitClient;
+  }
 
   async activate(context: ModuleContext): Promise<ModuleActivation> {
     this.#context = context;
@@ -60,18 +99,20 @@ export class CardNoteRuntime implements RuntimeModule {
       info: (message) => context.logger.info(message),
       error: (message) => context.logger.error(message),
     };
+    const syncCancellation = new AbortController();
+    this.#syncCancellation = syncCancellation;
     const coordinator = new SyncCoordinator({
       database,
       attachments,
       config: context.config,
-      git: new GitClient({ logger }),
+      git: this.#createGitClient?.() ?? new GitClient({ logger }),
       logger,
     });
     const scheduler = new SyncScheduler({
       database,
       config: context.config,
       synchronize: async () => {
-        await coordinator.synchronize();
+        await coordinator.synchronize(syncCancellation.signal);
       },
       logger,
     });
@@ -87,8 +128,14 @@ export class CardNoteRuntime implements RuntimeModule {
     const services = this.#services;
     this.#services = undefined;
     this.#context = undefined;
-    services?.scheduler.dispose();
-    services?.database.close();
+    if (services) {
+      // 停用顺序（架构设计 §10.2）：停定时器 → 取消在途同步 → 等待真正结束 → 才关闭数据库。
+      services.scheduler.dispose();
+      this.#syncCancellation?.abort();
+      this.#syncCancellation = undefined;
+      await services.scheduler.waitForIdle();
+      services.database.close();
+    }
   }
 
   #require(): CardNoteRuntimeServices {
@@ -104,7 +151,8 @@ export class CardNoteRuntime implements RuntimeModule {
    * 载荷为不可信输入：字段逐一显式转换，不透传任意结构。
    */
   pageService(): PageServiceInvoke {
-    return async (action, input) => {
+    return async (action, input, context) => {
+      const signal = context?.signal;
       const { database, attachments, config, coordinator, scheduler } = this.#require();
       const payload = (input ?? {}) as Record<string, unknown>;
       const string = (key: string): string => String(payload[key] ?? '');
@@ -127,13 +175,16 @@ export class CardNoteRuntime implements RuntimeModule {
       };
 
       switch (action) {
-        case PAGE_ACTIONS.getStats:
-          return database.stats();
+        case PAGE_ACTIONS.getStats: {
+          // 返回值以契约 DTO 类型收口：字段漂移在编译期暴露（R7 单一真源）
+          const stats: StatsJson = database.stats();
+          return stats;
+        }
         case PAGE_ACTIONS.listBooks:
-          return database.listBooks().map(toBookJson) as unknown as JsonValue;
+          return database.listBooks().map(toBookJson);
         case PAGE_ACTIONS.getBook: {
           const book = database.getBook(string('bookId'));
-          return book === null ? null : (toBookJson(book) as unknown as JsonValue);
+          return book === null ? null : toBookJson(book);
         }
         case PAGE_ACTIONS.createBook:
           return toBookJson(database.createBook(string('title')));
@@ -141,15 +192,16 @@ export class CardNoteRuntime implements RuntimeModule {
           return toBookJson(database.renameBook(string('bookId'), string('title')));
         case PAGE_ACTIONS.deleteBook: {
           database.deleteBook(string('bookId'));
-          return { deleted: true };
+          const receipt: DeletedResultJson = { deleted: true };
+          return receipt;
         }
         case PAGE_ACTIONS.listNotes:
           return database
             .listNotes(string('bookId'), optionalString('query') ?? '')
-            .map(toNoteJson) as unknown as JsonValue;
+            .map(toNoteJson);
         case PAGE_ACTIONS.getNote: {
           const note = database.getNote(string('noteId'));
-          return note === null ? null : (toNoteJson(note) as unknown as JsonValue);
+          return note === null ? null : toNoteJson(note);
         }
         case PAGE_ACTIONS.saveNote: {
           const saved = database.saveNote({
@@ -196,62 +248,80 @@ export class CardNoteRuntime implements RuntimeModule {
             }
             attachments.reorder(activeIds);
           }
-          return { id: saved.id, contentRevision: saved.contentRevision };
+          const receipt: SaveNoteResultJson = {
+            id: saved.id,
+            contentRevision: saved.contentRevision,
+          };
+          return receipt;
         }
         case PAGE_ACTIONS.deleteNote: {
           database.deleteNote(string('noteId'));
-          return { deleted: true };
+          const receipt: DeletedResultJson = { deleted: true };
+          return receipt;
         }
         case PAGE_ACTIONS.exportBook: {
           const format = string('format') === 'json' ? 'json' : 'markdown';
           const targetPath = optionalString('targetPath');
           if (targetPath !== null) {
-            return writeExport(
+            const written: ExportWrittenJson = writeExport(
               database,
               string('bookId'),
               format,
               targetPath,
-            ) as unknown as JsonValue;
+            );
+            return written;
           }
-          return buildExport(database, string('bookId'), format) as unknown as JsonValue;
+          const preview: ExportPreviewJson = buildExport(database, string('bookId'), format);
+          return preview;
         }
-        case PAGE_ACTIONS.importBook:
-          return importFromPath(database, string('sourcePath')) as unknown as JsonValue;
+        case PAGE_ACTIONS.importBook: {
+          const imported: ImportResultJson = importFromPath(database, string('sourcePath'));
+          return imported;
+        }
         case PAGE_ACTIONS.getSyncStatus: {
-          const status = await coordinator.status();
-          return {
-            workspacePath: status.settings.workspacePath,
-            remoteUrl: status.settings.remoteUrl,
-            deviceId: status.settings.deviceId,
-            lastSyncedHead: status.settings.lastSyncedHead,
-            autoSync: status.settings.autoSync,
-            intervalMinutes: status.settings.intervalMinutes,
-            configured: isConfigured(status.settings),
-            gitAvailable: status.gitAvailable,
-            gitError: status.gitError,
-            workspaceIsRepository: status.workspaceIsRepository,
-            pendingChanges: status.pendingChanges,
-          } as unknown as JsonValue;
+          const snapshot = await coordinator.status();
+          const status: SyncStatusJson = {
+            workspacePath: snapshot.settings.workspacePath,
+            remoteUrl: snapshot.settings.remoteUrl,
+            deviceId: snapshot.settings.deviceId,
+            lastSyncedHead: snapshot.settings.lastSyncedHead,
+            autoSync: snapshot.settings.autoSync,
+            intervalMinutes: snapshot.settings.intervalMinutes,
+            configured: isConfigured(snapshot.settings),
+            gitAvailable: snapshot.gitAvailable,
+            gitError: snapshot.gitError,
+            workspaceIsRepository: snapshot.workspaceIsRepository,
+            pendingChanges: snapshot.pendingChanges,
+          };
+          return status;
         }
         case PAGE_ACTIONS.initializeSyncWorkspace: {
-          await coordinator.initializeNewWorkspace({
-            workspacePath: string('workspacePath'),
-            remoteUrl: string('remoteUrl'),
-          });
+          await coordinator.initializeNewWorkspace(
+            {
+              workspacePath: string('workspacePath'),
+              remoteUrl: string('remoteUrl'),
+            },
+            signal,
+          );
           await scheduler.restart();
-          return { initialized: true };
+          const receipt: InitializedResultJson = { initialized: true };
+          return receipt;
         }
         case PAGE_ACTIONS.cloneSyncRepository: {
-          const imported = await coordinator.cloneAndImport({
-            workspacePath: string('workspacePath'),
-            remoteUrl: string('remoteUrl'),
-          });
+          const imported = await coordinator.cloneAndImport(
+            {
+              workspacePath: string('workspacePath'),
+              remoteUrl: string('remoteUrl'),
+            },
+            signal,
+          );
           await scheduler.restart();
-          return { importedDocuments: imported };
+          const receipt: CloneSyncResultJson = { importedDocuments: imported };
+          return receipt;
         }
         case PAGE_ACTIONS.syncNow: {
-          const result = await coordinator.synchronize();
-          return result as unknown as JsonValue;
+          const result: SyncRunResultJson = await coordinator.synchronize(signal);
+          return result;
         }
         case PAGE_ACTIONS.saveSyncConnection: {
           await saveSyncConnection(config, {
@@ -259,7 +329,8 @@ export class CardNoteRuntime implements RuntimeModule {
             remoteUrl: string('remoteUrl'),
           });
           await scheduler.restart();
-          return { saved: true };
+          const receipt: SavedResultJson = { saved: true };
+          return receipt;
         }
         case PAGE_ACTIONS.saveSyncAuto: {
           const interval = optionalInt('intervalMinutes');
@@ -268,32 +339,35 @@ export class CardNoteRuntime implements RuntimeModule {
             intervalMinutes: interval ?? 10,
           });
           await scheduler.restart();
-          return { saved: true };
+          const receipt: SavedResultJson = { saved: true };
+          return receipt;
         }
         case PAGE_ACTIONS.listAttachments:
-          return database
-            .getAttachmentsForNote(string('noteId'))
-            .map(toAttachmentJson) as unknown as JsonValue;
+          return database.getAttachmentsForNote(string('noteId')).map(toAttachmentJson);
         case PAGE_ACTIONS.probeAttachment: {
-          const probe = probeImage(string('path'));
-          return probe as unknown as JsonValue;
+          const probe: ProbeImageResultJson = probeImage(string('path'));
+          return probe;
         }
         case PAGE_ACTIONS.readAttachment: {
           const attachment = database.getAttachment(string('attachmentId'));
           if (attachment === null) return null;
-          return { dataUrl: attachments.readAsDataUrl(attachment) } as unknown as JsonValue;
+          const payload: ReadAttachmentResultJson = {
+            dataUrl: attachments.readAsDataUrl(attachment),
+          };
+          return payload;
         }
         case PAGE_ACTIONS.listTags:
-          return database.listTags().map(toTagJson) as unknown as JsonValue;
+          return database.listTags().map(toTagJson);
         case PAGE_ACTIONS.getNoteTags:
-          return database.getTagsForNote(string('noteId')).map(toTagJson) as unknown as JsonValue;
+          return database.getTagsForNote(string('noteId')).map(toTagJson);
         case PAGE_ACTIONS.ensureTag:
           return toTagJson(database.ensureTag(string('name')));
         case PAGE_ACTIONS.renameTag:
           return toTagJson(database.renameTag(string('tagId'), string('name')));
         case PAGE_ACTIONS.deleteTag: {
           database.deleteTag(string('tagId'));
-          return { deleted: true };
+          const receipt: DeletedResultJson = { deleted: true };
+          return receipt;
         }
         default:
           throw new DomainError(`未知的页面服务操作：${action}`);
@@ -302,16 +376,18 @@ export class CardNoteRuntime implements RuntimeModule {
   }
 }
 
-function toBookJson(book: Book): JsonValue {
+// 领域实体 → 页面服务 DTO 的序列化收口：返回类型绑定 contracts.ts 契约，
+// DTO 字段增删改在此处（以及 ui 侧调用签名）编译失败，替代原先的 as unknown as JsonValue 盲转。
+function toBookJson(book: Book): BookJson {
   return {
     id: book.id,
     title: book.title,
     createdAt: book.createdAt,
     updatedAt: book.updatedAt,
-  } as unknown as JsonValue;
+  };
 }
 
-function toNoteJson(note: Note): JsonValue {
+function toNoteJson(note: Note): NoteJson {
   return {
     id: note.id,
     bookId: note.bookId,
@@ -322,20 +398,20 @@ function toNoteJson(note: Note): JsonValue {
     contentRevision: note.contentRevision,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
-  } as unknown as JsonValue;
+  };
 }
 
-function toTagJson(tag: Tag): JsonValue {
+function toTagJson(tag: Tag): TagJson {
   return {
     id: tag.id,
     name: tag.name,
     normalizedName: tag.normalizedName,
     createdAt: tag.createdAt,
     updatedAt: tag.updatedAt,
-  } as unknown as JsonValue;
+  };
 }
 
-function toAttachmentJson(attachment: Attachment): JsonValue {
+function toAttachmentJson(attachment: Attachment): AttachmentJson {
   return {
     id: attachment.id,
     noteId: attachment.noteId,
@@ -347,12 +423,12 @@ function toAttachmentJson(attachment: Attachment): JsonValue {
     contentHash: attachment.contentHash,
     createdAt: attachment.createdAt,
     updatedAt: attachment.updatedAt,
-  } as unknown as JsonValue;
+  };
 }
 
 /** 组合根入口：创建卡片笔记运行时模块。 */
 export function createCardNoteRuntime(options: CreateCardNoteRuntimeOptions = {}): RuntimeModule {
-  const runtime = new CardNoteRuntime();
+  const runtime = new CardNoteRuntime(options.createGitClient);
   if (options.registerPageService) {
     options.registerPageService(runtime.pageService());
   }

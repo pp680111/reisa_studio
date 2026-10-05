@@ -2,15 +2,55 @@
  * 卡片笔记页面服务客户端（renderer 侧）。
  * 结构化访问宿主受限通道 window.reisa.modulePage；
  * 不导入宿主代码（边界检查：模块 UI 只依赖 SDK 与共享 UI 包）。
- * DTO 类型与 runtime 页面服务的 JSON 输出逐一对应（单一真源）。
+ * DTO 类型单一来源于 ../contracts.ts（runtime 侧同源），此处只做类型化调用与再导出。
  */
-import { MODULE_ID, PAGE_ACTIONS } from '../contracts.ts';
+import {
+  MODULE_ID,
+  PAGE_ACTIONS,
+  type AttachmentDraftInput,
+  type AttachmentJson,
+  type BookJson,
+  type CloneSyncResultJson,
+  type DeletedResultJson,
+  type ExportFormatJson,
+  type ExportPreviewJson,
+  type ExportWrittenJson,
+  type ImportResultJson,
+  type InitializedResultJson,
+  type ModulePageResult,
+  type NoteJson,
+  type ProbeImageResultJson,
+  type ReadAttachmentResultJson,
+  type SavedResultJson,
+  type SaveNoteResultJson,
+  type SyncRunResultJson,
+  type SyncStatusJson,
+  type TagJson,
+} from '../contracts.ts';
 
-export interface ModulePageResult<T> {
-  ok: boolean;
-  value?: T;
-  error?: { code: string; message: string };
-}
+/** 页面服务 DTO 的公开再导出：ui 组件沿用从 client 取类型的既有导入路径。 */
+export type {
+  AttachmentDraftInput,
+  AttachmentJson,
+  BookJson,
+  CloneSyncResultJson,
+  DeletedResultJson,
+  ExportFormatJson,
+  ExportPreviewJson,
+  ExportWrittenJson,
+  ImportResultJson,
+  InitializedResultJson,
+  ModulePageResult,
+  NoteJson,
+  ProbeImageResultJson,
+  ReadAttachmentResultJson,
+  SavedResultJson,
+  SaveNoteResultJson,
+  StatsJson,
+  SyncRunResultJson,
+  SyncStatusJson,
+  TagJson,
+} from '../contracts.ts';
 
 interface ModulePageBridge {
   invoke<T>(moduleId: string, action: string, input?: unknown): Promise<ModulePageResult<T>>;
@@ -61,94 +101,7 @@ export async function pickSavePath(
   return client.pickSavePath(suggestedName, extensions);
 }
 
-// ---- DTO（与 runtime toXJson 输出对齐） ----
-
-export interface BookJson {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface NoteJson {
-  id: string;
-  bookId: string;
-  quote: string;
-  comment: string | null;
-  pageStart: number | null;
-  pageEnd: number | null;
-  contentRevision: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface TagJson {
-  id: string;
-  name: string;
-  normalizedName: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface AttachmentJson {
-  id: string;
-  noteId: string;
-  storedFileName: string;
-  originalFileName: string;
-  mimeType: string;
-  byteSize: number;
-  sortOrder: number;
-  contentHash: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface AttachmentDraftInput {
-  /** 草稿 ID（新建时由 renderer 生成；保存时即附件行 ID）。 */
-  id: string;
-  /** 新附件的本地源路径；既有附件不携带。 */
-  sourcePath?: string;
-  originalFileName?: string;
-}
-
-export interface ProbeImageResultJson {
-  ok: boolean;
-  originalFileName: string;
-  byteSize: number;
-  previewDataUrl: string | null;
-  error: string | null;
-}
-
-export interface StatsJson {
-  books: number;
-  notes: number;
-  tags: number;
-}
-
-export interface SaveNoteResultJson {
-  id: string;
-  contentRevision: number;
-}
-
-export type ExportFormatJson = 'markdown' | 'json';
-
-export interface ExportPreviewJson {
-  content: string;
-  suggestedFileName: string;
-}
-
-export interface ExportWrittenJson {
-  written: true;
-  byteSize: number;
-}
-
-export interface ImportResultJson {
-  bookId: string;
-  title: string;
-  noteCount: number;
-}
-
-// ---- 类型化页面服务方法 ----
+// ---- 类型化页面服务方法（DTO 见 ../contracts.ts） ----
 
 export const listBooks = () => callPage<BookJson[]>(PAGE_ACTIONS.listBooks);
 export const getBook = (bookId: string) =>
@@ -157,7 +110,7 @@ export const createBook = (title: string) => callPage<BookJson>(PAGE_ACTIONS.cre
 export const renameBook = (bookId: string, title: string) =>
   callPage<BookJson>(PAGE_ACTIONS.renameBook, { bookId, title });
 export const deleteBook = (bookId: string) =>
-  callPage<{ deleted: boolean }>(PAGE_ACTIONS.deleteBook, { bookId });
+  callPage<DeletedResultJson>(PAGE_ACTIONS.deleteBook, { bookId });
 
 export const listNotes = (bookId: string, query = '') =>
   callPage<NoteJson[]>(PAGE_ACTIONS.listNotes, { bookId, query });
@@ -175,14 +128,14 @@ export const saveNote = (input: {
   attachments?: AttachmentDraftInput[];
 }) => callPage<SaveNoteResultJson>(PAGE_ACTIONS.saveNote, input);
 export const deleteNote = (noteId: string) =>
-  callPage<{ deleted: boolean }>(PAGE_ACTIONS.deleteNote, { noteId });
+  callPage<DeletedResultJson>(PAGE_ACTIONS.deleteNote, { noteId });
 
 export const listAttachments = (noteId: string) =>
   callPage<AttachmentJson[]>(PAGE_ACTIONS.listAttachments, { noteId });
 export const probeAttachment = (path: string) =>
   callPage<ProbeImageResultJson>(PAGE_ACTIONS.probeAttachment, { path });
 export const readAttachment = (attachmentId: string) =>
-  callPage<{ dataUrl: string } | null>(PAGE_ACTIONS.readAttachment, { attachmentId });
+  callPage<ReadAttachmentResultJson | null>(PAGE_ACTIONS.readAttachment, { attachmentId });
 
 export const listTags = () => callPage<TagJson[]>(PAGE_ACTIONS.listTags);
 export const getNoteTags = (noteId: string) =>
@@ -191,7 +144,7 @@ export const ensureTag = (name: string) => callPage<TagJson>(PAGE_ACTIONS.ensure
 export const renameTag = (tagId: string, name: string) =>
   callPage<TagJson>(PAGE_ACTIONS.renameTag, { tagId, name });
 export const deleteTag = (tagId: string) =>
-  callPage<{ deleted: boolean }>(PAGE_ACTIONS.deleteTag, { tagId });
+  callPage<DeletedResultJson>(PAGE_ACTIONS.deleteTag, { tagId });
 
 /** 生成导出内容并返回建议文件名（不落盘）。 */
 export const previewExport = (bookId: string, format: ExportFormatJson) =>
@@ -204,42 +157,21 @@ export const exportBookToFile = (bookId: string, format: ExportFormatJson, targe
 export const importBook = (sourcePath: string) =>
   callPage<ImportResultJson>(PAGE_ACTIONS.importBook, { sourcePath });
 
-// ---- 同步（M5） ----
-
-export interface SyncStatusJson {
-  workspacePath: string;
-  remoteUrl: string;
-  deviceId: string;
-  lastSyncedHead: string;
-  autoSync: boolean;
-  intervalMinutes: number;
-  configured: boolean;
-  gitAvailable: boolean;
-  gitError: string | null;
-  workspaceIsRepository: boolean;
-  pendingChanges: number;
-}
-
-export interface SyncRunResultJson {
-  exportedDocuments: number;
-  validatedDocuments: number;
-  head: string;
-  createdCommit: boolean;
-}
+// ---- 同步（M5；DTO 见 ../contracts.ts） ----
 
 export const getSyncStatus = () => callPage<SyncStatusJson>(PAGE_ACTIONS.getSyncStatus);
 export const initializeSyncWorkspace = (workspacePath: string, remoteUrl: string) =>
-  callPage<{ initialized: true }>(PAGE_ACTIONS.initializeSyncWorkspace, {
+  callPage<InitializedResultJson>(PAGE_ACTIONS.initializeSyncWorkspace, {
     workspacePath,
     remoteUrl,
   });
 export const cloneSyncRepository = (workspacePath: string, remoteUrl: string) =>
-  callPage<{ importedDocuments: number }>(PAGE_ACTIONS.cloneSyncRepository, {
+  callPage<CloneSyncResultJson>(PAGE_ACTIONS.cloneSyncRepository, {
     workspacePath,
     remoteUrl,
   });
 export const syncNow = () => callPage<SyncRunResultJson>(PAGE_ACTIONS.syncNow);
 export const saveSyncConnection = (workspacePath: string, remoteUrl: string) =>
-  callPage<{ saved: true }>(PAGE_ACTIONS.saveSyncConnection, { workspacePath, remoteUrl });
+  callPage<SavedResultJson>(PAGE_ACTIONS.saveSyncConnection, { workspacePath, remoteUrl });
 export const saveSyncAuto = (autoSync: boolean, intervalMinutes: number) =>
-  callPage<{ saved: true }>(PAGE_ACTIONS.saveSyncAuto, { autoSync, intervalMinutes });
+  callPage<SavedResultJson>(PAGE_ACTIONS.saveSyncAuto, { autoSync, intervalMinutes });

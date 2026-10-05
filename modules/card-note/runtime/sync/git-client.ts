@@ -14,8 +14,17 @@ export interface GitCommandResult {
   readonly stderr: string;
 }
 
+export interface GitCommandOptions {
+  /** 取消信号：中止时终止 git 子进程（模块停用/页面取消语义，架构设计 §10.2）。 */
+  readonly signal?: AbortSignal;
+}
+
 export interface GitCommandRunner {
-  run(arguments_: string[], workingDirectory?: string): Promise<GitCommandResult>;
+  run(
+    arguments_: string[],
+    workingDirectory?: string,
+    options?: GitCommandOptions,
+  ): Promise<GitCommandResult>;
 }
 
 export class GitException extends Error {
@@ -36,16 +45,30 @@ export function safeGitDetails(details: string): string {
 }
 
 export class SystemGitCommandRunner implements GitCommandRunner {
-  run(arguments_: string[], workingDirectory?: string): Promise<GitCommandResult> {
+  run(
+    arguments_: string[],
+    workingDirectory?: string,
+    options?: GitCommandOptions,
+  ): Promise<GitCommandResult> {
     return new Promise((resolve, reject) => {
       execFile(
         'git',
         arguments_,
-        { cwd: workingDirectory, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
+        {
+          cwd: workingDirectory,
+          maxBuffer: 64 * 1024 * 1024,
+          windowsHide: true,
+          signal: options?.signal,
+        },
         (error, stdout, stderr) => {
           const err = error as (NodeJS.ErrnoException & { code?: number | string }) | null;
           if (err === null || err === undefined) {
             resolve({ exitCode: 0, stdout: String(stdout), stderr: String(stderr) });
+            return;
+          }
+          // 取消中止（子进程被终止）优先于其他错误分类，避免误报为“无法启动 Git”。
+          if (options?.signal?.aborted || err.name === 'AbortError') {
+            reject(new GitException('Git 操作已取消', err.message));
             return;
           }
           if (err.code === 'ENOENT') {
@@ -78,16 +101,23 @@ export class GitClient {
     this.#logger = options.logger ?? { info: () => {}, error: () => {} };
   }
 
-  async verifyAvailable(): Promise<void> {
-    await this.#require(['--version'], { operation: '检查 Git' });
+  async verifyAvailable(signal?: AbortSignal): Promise<void> {
+    await this.#require(['--version'], { operation: '检查 Git', signal });
   }
 
-  async isRepository(directory: string): Promise<boolean> {
-    const result = await this.#runner.run(['rev-parse', '--is-inside-work-tree'], directory);
+  async isRepository(directory: string, signal?: AbortSignal): Promise<boolean> {
+    const result = await this.#runner.run(['rev-parse', '--is-inside-work-tree'], directory, {
+      signal,
+    });
     return result.exitCode === 0 && result.stdout.trim() === 'true';
   }
 
-  async initialize(directory: string, deviceId: string, remoteUrl?: string): Promise<void> {
+  async initialize(
+    directory: string,
+    deviceId: string,
+    remoteUrl?: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (existsSync(directory) && readdirSync(directory).length > 0) {
       throw new GitException('初始化同步仓库的目录必须为空');
     }
@@ -95,41 +125,50 @@ export class GitClient {
     await this.#require(['init', '--initial-branch=main'], {
       workingDirectory: directory,
       operation: '初始化同步仓库',
+      signal,
     });
-    await this.#configureIdentity(directory, deviceId);
+    await this.#configureIdentity(directory, deviceId, signal);
     if (remoteUrl !== undefined && remoteUrl.trim() !== '') {
-      await this.setRemote(directory, remoteUrl);
+      await this.setRemote(directory, remoteUrl, signal);
     }
   }
 
-  async clone(remoteUrl: string, target: string, deviceId: string): Promise<void> {
+  async clone(
+    remoteUrl: string,
+    target: string,
+    deviceId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (existsSync(target) && readdirSync(target).length > 0) {
       throw new GitException('克隆目录必须为空');
     }
-    await this.#require(['clone', remoteUrl, target], { operation: '克隆同步仓库' });
-    await this.#configureIdentity(target, deviceId);
+    await this.#require(['clone', remoteUrl, target], { operation: '克隆同步仓库', signal });
+    await this.#configureIdentity(target, deviceId, signal);
   }
 
-  async setRemote(directory: string, remoteUrl: string): Promise<void> {
-    const existing = await this.#runner.run(['remote', 'get-url', 'origin'], directory);
+  async setRemote(directory: string, remoteUrl: string, signal?: AbortSignal): Promise<void> {
+    const existing = await this.#runner.run(['remote', 'get-url', 'origin'], directory, { signal });
     if (existing.exitCode === 0) {
       await this.#require(['remote', 'set-url', 'origin', remoteUrl], {
         workingDirectory: directory,
         operation: '更新同步远端',
+        signal,
       });
     } else {
       await this.#require(['remote', 'add', 'origin', remoteUrl], {
         workingDirectory: directory,
         operation: '设置同步远端',
+        signal,
       });
     }
   }
 
   /** 远端是否存在 main 分支（ls-remote 退出码 2 = 不存在）。 */
-  async remoteMainExists(directory: string): Promise<boolean> {
+  async remoteMainExists(directory: string, signal?: AbortSignal): Promise<boolean> {
     const result = await this.#runner.run(
       ['ls-remote', '--exit-code', '--heads', 'origin', 'main'],
       directory,
+      { signal },
     );
     if (result.exitCode === 0) return true;
     if (result.exitCode === 2) return false;
@@ -137,12 +176,13 @@ export class GitClient {
   }
 
   /** 返回是否真的创建了提交；无文件变化是正常情况（源 stageAndCommit）。 */
-  async stageAndCommit(directory: string, message: string): Promise<boolean> {
+  async stageAndCommit(directory: string, message: string, signal?: AbortSignal): Promise<boolean> {
     await this.#require(['add', '--all'], {
       workingDirectory: directory,
       operation: '暂存同步数据',
+      signal,
     });
-    const diff = await this.#runner.run(['diff', '--cached', '--quiet'], directory);
+    const diff = await this.#runner.run(['diff', '--cached', '--quiet'], directory, { signal });
     if (diff.exitCode === 0) return false;
     if (diff.exitCode !== 1) {
       throw new GitException('检查同步变更失败', safeGitDetails(diff.stderr));
@@ -150,52 +190,65 @@ export class GitClient {
     await this.#require(['commit', '--message', message], {
       workingDirectory: directory,
       operation: '提交同步数据',
+      signal,
     });
     return true;
   }
 
-  async fetchAndRebase(directory: string): Promise<void> {
+  async fetchAndRebase(directory: string, signal?: AbortSignal): Promise<void> {
     await this.#require(['fetch', 'origin', 'main'], {
       workingDirectory: directory,
       operation: '获取远端同步数据',
+      signal,
     });
     await this.#require(['rebase', 'origin/main'], {
       workingDirectory: directory,
       operation: '合并远端同步数据',
+      signal,
     });
   }
 
-  async pushMain(directory: string, setUpstream = false): Promise<void> {
+  async pushMain(directory: string, setUpstream = false, signal?: AbortSignal): Promise<void> {
     await this.#require(['push', ...(setUpstream ? ['--set-upstream'] : []), 'origin', 'main'], {
       workingDirectory: directory,
       operation: '推送同步数据',
+      signal,
     });
   }
 
-  async head(directory: string): Promise<string> {
+  async head(directory: string, signal?: AbortSignal): Promise<string> {
     const result = await this.#require(['rev-parse', '--short', 'HEAD'], {
       workingDirectory: directory,
       operation: '读取同步版本',
+      signal,
     });
     return result.stdout.trim();
   }
 
-  async #configureIdentity(directory: string, deviceId: string): Promise<void> {
+  async #configureIdentity(
+    directory: string,
+    deviceId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     await this.#require(['config', 'user.name', 'Card Note'], {
       workingDirectory: directory,
       operation: '配置同步作者',
+      signal,
     });
     await this.#require(['config', 'user.email', `${deviceId}@card-note.local`], {
       workingDirectory: directory,
       operation: '配置同步作者',
+      signal,
     });
   }
 
   async #require(
     arguments_: string[],
-    options: { workingDirectory?: string; operation: string },
+    options: { workingDirectory?: string; operation: string; signal?: AbortSignal },
   ): Promise<GitCommandResult> {
-    const result = await this.#runner.run(arguments_, options.workingDirectory);
+    const result = await this.#runner.run(arguments_, options.workingDirectory, {
+      signal: options.signal,
+    });
     if (result.exitCode !== 0) {
       this.#logger.error(`${options.operation} 失败：${safeGitDetails(result.stderr)}`);
       throw new GitException(options.operation, safeGitDetails(result.stderr));

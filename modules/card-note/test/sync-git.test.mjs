@@ -31,6 +31,16 @@ class FakeRunner {
 
 const logger = { info: () => {}, error: () => {} };
 
+/** 轮询等待条件成立（外部可观察时序断言用）。 */
+async function waitFor(predicate, timeoutMs = 5000) {
+  const start = Date.now();
+  for (;;) {
+    if (predicate()) return;
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor 超时');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 test('GitClient（假 runner）：无变更时不提交；有变更时提交', async () => {
   const runner = new FakeRunner();
   const client = new GitClient({ runner, logger });
@@ -104,6 +114,127 @@ test('调度器：未配置/无变更不触发同步；有变更且启用时触�
 
   scheduler.dispose();
   database.close();
+});
+
+test('调度器：waitForIdle 等待在途同步结束；dispose 后不再启动新同步', async () => {
+  const database = new CardNoteDatabase(':memory:');
+  const config = new MemoryConfig();
+  await config.set('sync.auto_sync', true);
+  await config.set('sync.workspace_path', join(tmpdir(), 'card-note-ws-idle'));
+  let syncCalls = 0;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const scheduler = new SyncScheduler({
+    database,
+    config,
+    synchronize: async () => {
+      syncCalls += 1;
+      await gate;
+    },
+    logger,
+  });
+
+  database.createBook('在途书');
+  const running = scheduler.runIfNeeded();
+  await waitFor(() => syncCalls === 1);
+  scheduler.dispose();
+
+  let idle = false;
+  const idlePromise = scheduler.waitForIdle().then(() => {
+    idle = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(idle, false, '在途同步未结束时不视为空闲（停用先等待）');
+
+  release();
+  await running;
+  await idlePromise;
+  assert.equal(idle, true, '在途同步结束后停用完成等待');
+
+  await scheduler.runIfNeeded();
+  assert.equal(syncCalls, 1, 'dispose 后不再启动新的后台同步');
+  database.close();
+});
+
+test('协调器：取消信号中止同步；取消后不备份/写库，数据库保持可用', async () => {
+  const temporary = mkdtempSync(join(tmpdir(), 'card-note-cancel-'));
+  const databasePath = join(temporary, 'card-note.sqlite');
+  const database = new CardNoteDatabase(databasePath);
+  try {
+    database.createBook('取消书');
+    const config = new MemoryConfig();
+    await config.set('sync.workspace_path', join(temporary, 'workspace'));
+    await config.set('sync.remote_url', 'https://example.com/repo.git');
+
+    // 挂在 add（提交阶段）直到取消信号到达，模拟长耗时 git 操作被中止
+    const runner = {
+      calls: [],
+      abortSeen: false,
+      run(arguments_, _workingDirectory, options) {
+        this.calls.push(arguments_.join(' '));
+        if (arguments_[0] === 'rev-parse') {
+          return Promise.resolve({ exitCode: 0, stdout: 'true', stderr: '' });
+        }
+        if (arguments_[0] !== 'add') {
+          return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+        }
+        return new Promise((_resolve, reject) => {
+          const onAbort = () => {
+            this.abortSeen = true;
+            reject(new GitException('Git 操作已取消'));
+          };
+          const signal = options?.signal;
+          if (signal?.aborted) onAbort();
+          else signal?.addEventListener('abort', onAbort, { once: true });
+        });
+      },
+    };
+    const coordinator = new SyncCoordinator({
+      database,
+      attachments: {},
+      config,
+      git: new GitClient({ runner, logger }),
+      logger,
+    });
+
+    const controller = new AbortController();
+    let settled = false;
+    const run = coordinator.synchronize(controller.signal);
+    run.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await waitFor(() => runner.calls.includes('add --all'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(settled, false, '取消前同步持续进行');
+
+    controller.abort();
+    await assert.rejects(() => run, /取消/, '取消信号中止同步');
+    assert.equal(runner.abortSeen, true, 'git 子进程调用收到取消信号');
+    assert.ok(!existsSync(`${databasePath}.bak`), '取消后不产生数据库备份');
+    assert.ok(
+      database.getPendingSyncChanges().length > 0,
+      '取消后不确认 outbox（下次同步安全重导）',
+    );
+    assert.deepEqual(
+      database.stats(),
+      { books: 1, notes: 0, tags: 0 },
+      '取消后数据库保持可用且未被写入',
+    );
+  } finally {
+    try {
+      database.close();
+    } catch {
+      // 已关闭
+    }
+    rmSync(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
 });
 
 test('协调器（真实 git）：初始化 → 变更同步推送；另一设备克隆导入；导入前产生备份', async () => {

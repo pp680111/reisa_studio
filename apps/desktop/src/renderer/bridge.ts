@@ -69,6 +69,14 @@ export interface ReisaUsage {
   outputTokens?: number;
 }
 
+/** 宿主模块生命周期状态（ModuleHost ModuleStatus 的受限投影；failed 模块带失败原因）。 */
+export interface ReisaModuleStatus {
+  id: string;
+  version: string;
+  state: string;
+  error?: string;
+}
+
 export interface ReisaModulePageResult<T> {
   ok: boolean;
   value?: T;
@@ -88,7 +96,7 @@ export interface ReisaBridge {
     getMessages(conversationId: string): Promise<ReisaMessage[]>;
     getToolRecords(
       conversationId: string,
-    ): Promise<{ invocationId: string; toolName: string; status: string }[]>;
+    ): Promise<{ invocationId: string; toolName: string; status: string; errorCode?: string }[]>;
     send(
       conversationId: string,
       text: string,
@@ -96,11 +104,13 @@ export interface ReisaBridge {
     ): Promise<{ status: 'completed' | 'cancelled' | 'error'; usage?: ReisaUsage }>;
     cancel(conversationId: string): Promise<boolean>;
     listCapabilities(): Promise<ReisaCapability[]>;
-    listModules(): Promise<{ id: string; state: string }[]>;
+    listModules(): Promise<ReisaModuleStatus[]>;
     setModuleEnabled(
       id: string,
       enabled: boolean,
     ): Promise<{ state: string | undefined; error: string | undefined }>;
+    /** 订阅模块生命周期状态变化（含过渡态与失败原因）；返回取消订阅函数。 */
+    onModuleState(listener: (status: ReisaModuleStatus) => void): () => void;
     onEvent(listener: (payload: { conversationId: string; event: ReisaEvent }) => void): () => void;
   };
   settings: {
@@ -123,11 +133,6 @@ export interface ReisaBridge {
     ): Promise<ReisaModulePageResult<T>>;
     pickPath(mode: 'directory' | 'file', extensions?: string[]): Promise<string | null>;
     pickSavePath(suggestedName?: string, extensions?: string[]): Promise<string | null>;
-  };
-  /** 模块私有配置（模块自己的 settings.json，与 ModuleConfigScope 同一存储）。 */
-  moduleConfig: {
-    get<T = unknown>(moduleId: string, key: string): Promise<T | null>;
-    set(moduleId: string, key: string, value: unknown): Promise<boolean>;
   };
 }
 

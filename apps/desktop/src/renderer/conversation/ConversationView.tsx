@@ -3,8 +3,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PublicResult } from '@reisa/module-sdk';
 import { Badge, Button, EmptyState, Icon, IconButton } from '@reisa/ui';
-import { ToolCallRecord, type ToolStatus } from './ToolCallRecord';
-import type { ReisaAttachmentInput, ReisaBridge, ReisaEvent, ReisaMessage } from '../bridge';
+import { ToolCallRecord } from './ToolCallRecord';
+import { messagesToEntries, type Entry } from './entries';
+import type { ReisaAttachmentInput, ReisaBridge, ReisaEvent } from '../bridge';
 
 export interface Conversation {
   id: string;
@@ -18,19 +19,6 @@ export function createConversation(): Conversation {
   return { id: crypto.randomUUID(), title: '新建会话', draft: '', messages: [], attachments: [] };
 }
 
-/** 用户消息中附件块的起始分隔符（由主进程合成，见 conversation-manager）。 */
-const ATTACHMENT_DELIMITER = '--- 附件：';
-
-/** 用户消息展示：截去附件内联内容，只显示正文与附件摘要。 */
-export function displayUserText(text: string): string {
-  const cut = text.indexOf(`\n\n${ATTACHMENT_DELIMITER}`);
-  const head = cut === -1 ? text : text.slice(0, cut);
-  const names =
-    cut === -1 ? [] : [...text.slice(cut).matchAll(/--- 附件：(.+?) ---/g)].map((m) => m[1]);
-  if (names.length === 0) return head;
-  return `${head}\n附件：${names.join('、')}`;
-}
-
 async function fileToBase64(file: File): Promise<string> {
   const buffer = new Uint8Array(await file.arrayBuffer());
   let binary = '';
@@ -39,72 +27,6 @@ async function fileToBase64(file: File): Promise<string> {
     binary += String.fromCharCode(...buffer.subarray(offset, offset + chunk));
   }
   return btoa(binary);
-}
-
-/** 会话条目：持久化消息与实时事件合成的展示单元。 */
-type Entry =
-  | { kind: 'text'; role: 'user' | 'assistant'; text: string }
-  | {
-      kind: 'tool';
-      toolCallId: string;
-      toolName: string;
-      status: ToolStatus;
-      input?: unknown;
-      output?: unknown;
-      error?: string;
-    };
-
-function unwrapOutput(output: unknown): unknown {
-  if (
-    output &&
-    typeof output === 'object' &&
-    (output as { type?: unknown }).type === 'json' &&
-    'value' in output
-  ) {
-    return (output as { value: unknown }).value;
-  }
-  return output;
-}
-
-function messagesToEntries(messages: ReisaMessage[]): Entry[] {
-  const entries: Entry[] = [];
-  for (const message of messages) {
-    if (message.role === 'user') {
-      const text = typeof message.content === 'string' ? message.content : '';
-      if (text) entries.push({ kind: 'text', role: 'user', text: displayUserText(text) });
-      continue;
-    }
-    if (!Array.isArray(message.content)) continue;
-    if (message.role === 'assistant') {
-      const text = message.content
-        .filter((part) => part.type === 'text')
-        .map((part) => part.text ?? '')
-        .join('');
-      if (text) entries.push({ kind: 'text', role: 'assistant', text });
-      for (const part of message.content) {
-        if (part.type === 'tool-call' && part.toolCallId) {
-          entries.push({
-            kind: 'tool',
-            toolCallId: String(part.toolCallId),
-            toolName: String(part.toolName ?? ''),
-            status: 'completed',
-            input: part.input,
-          });
-        }
-      }
-    }
-    if (message.role === 'tool') {
-      for (const part of message.content) {
-        if (part.type === 'tool-result' && part.toolCallId) {
-          const entry = [...entries]
-            .reverse()
-            .find((item) => item.kind === 'tool' && item.toolCallId === part.toolCallId);
-          if (entry && entry.kind === 'tool') entry.output = unwrapOutput(part.output);
-        }
-      }
-    }
-  }
-  return entries;
 }
 
 function applyEvent(entries: Entry[], event: ReisaEvent): Entry[] {
@@ -196,8 +118,12 @@ export function ConversationView({
 
   const load = useCallback(async () => {
     if (!bridge) return;
-    const messages = await bridge.conversation.getMessages(conversation.id);
-    setEntries(messagesToEntries(messages));
+    // 历史与工具记录并行加载：失败的工具调用需按记录还原为失败状态（持久化结果可能不带失败信息）
+    const [messages, toolRecords] = await Promise.all([
+      bridge.conversation.getMessages(conversation.id),
+      bridge.conversation.getToolRecords(conversation.id),
+    ]);
+    setEntries(messagesToEntries(messages, toolRecords));
   }, [bridge, conversation.id]);
 
   useEffect(() => {

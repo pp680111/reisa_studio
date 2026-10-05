@@ -16,15 +16,15 @@ function fakeResponse(texts) {
   };
 }
 
-/** 可编程客户端：按脚本依次抛错或返回；空脚本默认返回成功响应。 */
+/** 可编程客户端：按脚本依次抛错或返回；空脚本默认返回成功响应。记录请求与取消选项。 */
 function scriptedClient(script) {
   const attempts = [];
   let call = 0;
   return {
     attempts,
     embeddings: {
-      async create(input) {
-        attempts.push({ input, at: call });
+      async create(input, options) {
+        attempts.push({ input, options, at: call });
         const step =
           script.length === 0
             ? {
@@ -198,4 +198,40 @@ test('任一批失败要等全部批次结束（skb 整轮失败语义）', asyn
   // 'fast-fail' 落在第一批，慢批在第二批：整轮仍要等慢批完成才抛
   await assert.rejects(() => embedder.embed(['fast-fail', 'slow-one']));
   assert.equal(finishedSecond, true, '失败批次不提前释放对账锁');
+});
+
+test('取消信号：已中止的调用不发起 SDK 请求', async () => {
+  const { embedder, client } = makeClient([]);
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(() => embedder.embed(['x'], controller.signal));
+  assert.equal(client.attempts.length, 0, '已取消的调用不产生任何请求（无副作用）');
+});
+
+test('取消信号：退避等待期间中止立即停止重试，SDK 请求透传信号', async () => {
+  // 可中止的 sleep：等待期间收到 abort 即刻拒绝（模拟取消打断 30s 退避）
+  const sleeps = [];
+  const abortableSleep = (seconds, signal) =>
+    new Promise((resolve, reject) => {
+      sleeps.push(seconds);
+      const onAbort = () => reject(new Error('wait aborted'));
+      if (signal?.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    });
+  const { embedder, client } = makeClient(
+    [Object.assign(new Error('slow down'), { status: 429 }), fakeResponse(['x'])],
+    { sleep: abortableSleep },
+  );
+  const controller = new AbortController();
+  const embedding = embedder.embed(['x'], controller.signal);
+
+  // 第一发已发出且进入 429 退避
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(client.attempts.length, 1);
+  assert.equal(client.attempts[0].options?.signal, controller.signal, 'SDK 请求收到取消信号');
+  assert.deepEqual(sleeps, [30.0]);
+
+  controller.abort();
+  await assert.rejects(() => embedding);
+  assert.equal(client.attempts.length, 1, '中止后不再发起重试请求');
 });

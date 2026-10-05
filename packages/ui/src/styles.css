@@ -223,14 +223,6 @@ small {
 .full-width {
   width: 100%;
 }
-.status-dot {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  background: var(--success);
-  border-radius: 50%;
-  margin-right: 5px;
-}
 .app-shell {
   display: flex;
   height: 100dvh;
@@ -430,40 +422,6 @@ kbd {
   border-top: 1px solid var(--border);
   padding-top: 9px;
 }
-.workspace-profile {
-  display: flex;
-  gap: 10px;
-  padding: 17px 5px 18px;
-  align-items: center;
-}
-.profile-avatar {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  font-size: 14px;
-  font-weight: 600;
-  background: var(--avatar);
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  flex-shrink: 0;
-}
-.workspace-profile strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 550;
-}
-.workspace-profile small {
-  display: block;
-  font-size: 12px;
-  margin-top: 4px;
-  color: var(--faint);
-}
-.workspace-profile > svg {
-  margin-left: auto;
-  color: var(--faint);
-}
 .app-sidebar.collapsed {
   width: 58px;
   padding: 0 7px;
@@ -482,8 +440,6 @@ kbd {
 .collapsed kbd,
 .collapsed .pin-mark,
 .collapsed .group-label,
-.collapsed .workspace-profile div,
-.collapsed .workspace-profile > svg,
 .collapsed .nav-row-actions {
   display: none;
 }
@@ -499,10 +455,6 @@ kbd {
   border-top: 1px solid var(--border);
   padding-top: 15px;
   margin-top: 10px;
-}
-.collapsed .workspace-profile {
-  justify-content: center;
-  padding: 16px 0;
 }
 .app-workspace {
   flex: 1;

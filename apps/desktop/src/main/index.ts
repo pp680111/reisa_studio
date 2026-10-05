@@ -1,12 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { testModelConnection } from '@reisa/agent-adapter';
-import {
-  createAppRuntime,
-  getModuleConfigScope,
-  getModulePageService,
-  type AppRuntime,
-} from '../composition/runtime.ts';
+import { createAppRuntime, getModulePageService, type AppRuntime } from '../composition/runtime.ts';
+import { nextEnabledModules } from './enabled-modules.ts';
 import { ConversationManager, type IncomingAttachment } from './conversation-manager.ts';
 import { ConversationStore } from './conversations/store.ts';
 import { runSmoke } from './smoke.ts';
@@ -102,6 +98,13 @@ function getRuntime(): Promise<RuntimeAssembly> {
         }
       },
     });
+    // 宿主生命周期状态变化实时推送给 renderer（架构设计 §10）：
+    // 过渡态（activating/deactivating）与 failed 的失败原因立即可见。
+    runtime.host.onStateChange((status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send('reisa/module/state', status);
+      }
+    });
     return { runtime, store, manager };
   })();
   return runtimePromise;
@@ -170,12 +173,14 @@ function registerIpc(): void {
     'reisa/modules/setEnabled',
     async (_event, payload: { id: string; enabled: boolean }) => {
       const { runtime } = await getRuntime();
-      const current = (await runtime.config.get<string[]>('enabledModules')) ?? [];
-      const enabledModules = payload.enabled
-        ? current.includes(payload.id)
-          ? current
-          : [...current, payload.id]
-        : current.filter((id) => id !== payload.id);
+      // 缺失配置播种为完整启用清单（缺失 = 全启用，与组合根缺省语义一致）：
+      // 首次停用单个模块不会把空清单持久化成有效配置。
+      const enabledModules = nextEnabledModules(
+        await runtime.config.get<string[]>('enabledModules'),
+        runtime.host.listModules().map((module) => module.id),
+        payload.id,
+        payload.enabled,
+      );
       await runtime.config.set('enabledModules', enabledModules);
       // 未接入运行时的模块只保存启用状态；有运行时的模块走真实生命周期
       if (runtime.host.getStatus(payload.id) === undefined) {
@@ -239,6 +244,7 @@ function registerIpc(): void {
 
   // 模块页面服务（迁移设计文档 §8.1）：受限通道，仅允许调用已激活模块声明的页面操作；
   // 管理面操作只经此通道，不进入 Agent 能力集合（知识库 §5.3 安全分层）。
+  // 页面调用经宿主 runTracked 在途登记：停用等待页面调用结束并传递停用取消信号（架构设计 §10.2）。
   ipcMain.handle(
     'reisa/module/page',
     async (_event, payload: { moduleId: string; action: string; input?: unknown }) => {
@@ -257,9 +263,22 @@ function registerIpc(): void {
         };
       }
       try {
-        const value = await service(payload.action, (payload.input ?? {}) as never);
+        const value = await runtime.host.runTracked(payload.moduleId, (signal) =>
+          service(payload.action, (payload.input ?? {}) as never, { signal }),
+        );
         return { ok: true as const, value };
       } catch (error) {
+        const state = runtime.host.getState(payload.moduleId);
+        if (state !== 'active') {
+          // 停用引发的取消/拒绝统一为能力不可用，不伪装成执行失败。
+          return {
+            ok: false as const,
+            error: {
+              code: 'CAPABILITY_UNAVAILABLE',
+              message: state === 'deactivating' ? '模块正在停用' : '模块未激活',
+            },
+          };
+        }
         return {
           ok: false as const,
           error: {
@@ -268,25 +287,6 @@ function registerIpc(): void {
           },
         };
       }
-    },
-  );
-
-  // 模块私有配置读写（reisa/module/config）：句柄由组合根登记，仅限本模块 settings.json。
-  ipcMain.handle(
-    'reisa/module/config/get',
-    async (_event, payload: { moduleId: string; key: string }) => {
-      const scope = getModuleConfigScope(payload.moduleId);
-      if (scope === undefined) return null;
-      return (await scope.get(payload.key)) ?? null;
-    },
-  );
-  ipcMain.handle(
-    'reisa/module/config/set',
-    async (_event, payload: { moduleId: string; key: string; value: unknown }) => {
-      const scope = getModuleConfigScope(payload.moduleId);
-      if (scope === undefined) return false;
-      await scope.set(payload.key, payload.value as never);
-      return true;
     },
   );
 

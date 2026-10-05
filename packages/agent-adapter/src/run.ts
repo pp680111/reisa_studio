@@ -90,18 +90,26 @@ export function startConversation(options: StartConversationOptions): Conversati
     ? AbortSignal.any([controller.signal, options.signal])
     : controller.signal;
 
+  // 流中错误独立捕获（onError 的触发不依赖事件流被消费）：
+  // 流错误时 steps/finishReason 可能照常 resolve，仅靠它们会把失败误判为完成。
+  let streamFailed = false;
+  let streamError: unknown;
   const result = streamText({
     model: options.model,
     messages: [...options.messages],
     tools: toFrameworkTools(options.capabilities, options.invoker),
     stopWhen: isLoopFinished(),
     abortSignal: signal,
+    onError: ({ error }) => {
+      streamFailed = true;
+      streamError ??= error;
+    },
   }) as unknown as RunHandle;
 
   return {
     cancel: () => controller.abort(),
     events: mapConversationEvents(result.fullStream),
-    outcome: collectOutcome(result, signal),
+    outcome: collectOutcome(result, signal, () => (streamFailed ? streamError : undefined)),
   };
 }
 
@@ -152,9 +160,13 @@ async function* mapConversationEvents(
   }
 }
 
+/** finishReason 为 error 但流中无错误对象可取时的兜底文案（不带内部细节）。 */
+const STREAM_ERROR_MESSAGE = '模型流返回错误，本次回复未完成';
+
 async function collectOutcome(
   result: RunHandle,
   signal: AbortSignal,
+  streamError: () => unknown,
 ): Promise<ConversationOutcome> {
   let finishReason: ConversationFinishReason | undefined;
   try {
@@ -181,16 +193,19 @@ async function collectOutcome(
     // 用量不可得（如取消路径）不视为失败
   }
 
+  // 用户主动中止优先于错误归类：中止仍是中止，不算 error
   if (signal.aborted) {
     return { status: 'cancelled', finishReason: 'abort', messages, ...(usage ? { usage } : {}) };
   }
-  if (failure) {
+  const streamFailure = streamError();
+  if (failure !== undefined || streamFailure !== undefined || finishReason === 'error') {
+    const source = streamFailure ?? failure;
     return {
       status: 'error',
       finishReason,
       messages,
       ...(usage ? { usage } : {}),
-      error: describeError(failure),
+      error: source !== undefined ? describeError(source) : STREAM_ERROR_MESSAGE,
     };
   }
   return {

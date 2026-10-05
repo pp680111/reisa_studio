@@ -12,7 +12,7 @@ import {
 } from '@reisa/foundation';
 import { ModuleHost } from '@reisa/module-host';
 import { createOpenAICompatibleModel, type ProviderConnectionConfig } from '@reisa/agent-adapter';
-import type { JsonValue, ModuleConfigScope } from '@reisa/module-sdk';
+import type { JsonValue } from '@reisa/module-sdk';
 import type { LanguageModel } from 'ai';
 import { createKnowledgeRuntime } from '@reisa/module-knowledge/runtime';
 import { createCardNoteRuntime } from '@reisa/module-card-note/runtime';
@@ -57,21 +57,21 @@ export interface AppRuntime {
 }
 
 /**
- * 模块页面服务与配置句柄注册表（迁移设计文档 §8.1）：
- * 受限 IPC（reisa/module/page、reisa/module/config）经此访问模块提供的
- * 页面服务与私有配置；仅主进程可达，renderer 不能绕过。
+ * 模块页面服务注册表（迁移设计文档 §8.1）：
+ * 受限 IPC（reisa/module/page）经此访问模块提供的页面服务；
+ * 仅主进程可达，renderer 不能绕过。
  */
-export type ModulePageServiceInvoke = (action: string, input: JsonValue) => Promise<JsonValue>;
+export type ModulePageServiceInvoke = (
+  action: string,
+  input: JsonValue,
+  /** 可选调用上下文：宿主 runTracked 传入与模块停用关联的取消信号（架构设计 §10.2）。 */
+  context?: { readonly signal?: AbortSignal },
+) => Promise<JsonValue>;
 
 const modulePageServices = new Map<string, ModulePageServiceInvoke>();
-const moduleConfigScopes = new Map<string, ModuleConfigScope>();
 
 export function getModulePageService(moduleId: string): ModulePageServiceInvoke | undefined {
   return modulePageServices.get(moduleId);
-}
-
-export function getModuleConfigScope(moduleId: string): ModuleConfigScope | undefined {
-  return moduleConfigScopes.get(moduleId);
 }
 
 /**
@@ -118,11 +118,7 @@ export async function createAppRuntime(userDataPath: string): Promise<AppRuntime
 
   const host = new ModuleHost({
     storageRoot: layout.modulesDir,
-    servicesFactory: async (moduleId) => {
-      const services = await createNodeModuleServices(layout.modulesDir, moduleId);
-      moduleConfigScopes.set(moduleId, services.config);
-      return services;
-    },
+    servicesFactory: async (moduleId) => createNodeModuleServices(layout.modulesDir, moduleId),
   });
 
   // 启用状态属于宿主自身配置（架构设计 §8.1）；未配置时默认启用内置运行模块。

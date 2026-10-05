@@ -3,7 +3,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePageRange, validateQuote } from '../runtime/validation.ts';
+import { parsePageRange, validateQuote } from '../domain/validation.ts';
 
 test('单页解析为起止相同', () => {
   assert.deepEqual(parsePageRange('12'), { start: 12, end: 12 });

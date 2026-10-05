@@ -8,7 +8,18 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ModuleHost } from '@reisa/module-host';
+import { GitClient } from '../runtime/sync/git-client.ts';
 import { createCardNoteRuntime } from '../runtime/index.ts';
+
+/** 轮询等待条件成立（外部可观察时序断言用）。 */
+async function waitFor(predicate, timeoutMs = 5000) {
+  const start = Date.now();
+  for (;;) {
+    if (predicate()) return;
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor 超时');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 async function makeHost() {
   const root = await mkdtemp(join(tmpdir(), 'card-note-runtime-'));
@@ -210,5 +221,80 @@ test('停用后重新激活，数据保留（决策：停用不删数据）', as
     assert.equal((await pageService('list_notes', { bookId: book.id })).length, 1);
   } finally {
     await cleanup();
+  }
+});
+
+test('同步进行中停用：停用等待在途同步、取消信号到达 git、数据保留', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'card-note-deactivate-'));
+  const host = new ModuleHost({ storageRoot: root });
+  let pageService;
+  // 假 git runner：挂在 add（提交阶段）——先等取消信号到达，再等外部放行才失败，
+  // 用于断言“取消信号传递”与“停用等待同步真正结束”两个时序。
+  const state = { calls: [], abortSeen: false };
+  let release;
+  const releaseGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const runner = {
+    run(arguments_, _workingDirectory, options) {
+      state.calls.push(arguments_.join(' '));
+      if (arguments_[0] === 'rev-parse') {
+        return Promise.resolve({ exitCode: 0, stdout: 'true', stderr: '' });
+      }
+      if (arguments_[0] !== 'add') {
+        return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+      }
+      return (async () => {
+        const signal = options?.signal;
+        await new Promise((resolve) => {
+          const onAbort = () => {
+            state.abortSeen = true;
+            resolve();
+          };
+          if (signal?.aborted) onAbort();
+          else signal.addEventListener('abort', onAbort, { once: true });
+        });
+        await releaseGate;
+        throw new Error('Git 操作已取消');
+      })();
+    },
+  };
+  const runtime = createCardNoteRuntime({
+    registerPageService: (invoke) => {
+      pageService = invoke;
+    },
+    createGitClient: () => new GitClient({ runner, logger: { info: () => {}, error: () => {} } }),
+  });
+  host.register(runtime);
+  await host.activate('card-note');
+  try {
+    await pageService('save_sync_connection', {
+      workspacePath: join(root, 'workspace'),
+      remoteUrl: 'https://example.com/repo.git',
+    });
+    await pageService('create_book', { title: '停用同步书' });
+
+    // 生产同路径：页面调用经宿主 runTracked 执行，信号与模块停用关联
+    const sync = host.runTracked('card-note', (signal) => pageService('sync_now', {}, { signal }));
+    await waitFor(() => state.calls.includes('add --all'));
+
+    const deactivating = host.deactivate('card-note');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(state.abortSeen, true, '停用向在途同步传递取消信号');
+    assert.equal(host.getState('card-note'), 'deactivating', '在途同步未结束时停用保持等待');
+
+    release();
+    await assert.rejects(() => sync, /取消/, '在途同步以取消结束（非数据库已关闭错误）');
+    await deactivating;
+    assert.equal(host.getState('card-note'), 'disabled');
+
+    // 数据库在同步结束后才关闭且未被破坏：重新激活后数据保留
+    await host.activate('card-note');
+    const books = await pageService('list_books', {});
+    assert.equal(books.length, 1);
+    assert.equal(books[0].title, '停用同步书');
+  } finally {
+    await host.deactivate('card-note').catch(() => {});
+    await rm(root, { recursive: true, force: true });
   }
 });

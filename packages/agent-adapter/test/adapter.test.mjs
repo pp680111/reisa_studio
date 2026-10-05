@@ -67,6 +67,28 @@ function textStep(index, text) {
   ];
 }
 
+/** 未完成任何步骤的流中途错误：错误部件后流终止。 */
+function interruptedTextStep(index, text) {
+  return [
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: `t-${index}` },
+    { type: 'text-delta', id: `t-${index}`, delta: text },
+    { type: 'text-end', id: `t-${index}` },
+    { type: 'error', error: new Error('模拟模型流中断') },
+  ];
+}
+
+/** 模型以 error 结束原因收尾（步骤已完成，无错误部件）。 */
+function errorFinishStep(index, text) {
+  return [
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: `t-${index}` },
+    { type: 'text-delta', id: `t-${index}`, delta: text },
+    { type: 'text-end', id: `t-${index}` },
+    { type: 'finish', usage, finishReason: { unified: 'error', raw: undefined } },
+  ];
+}
+
 function scriptedModel(steps) {
   let call = 0;
   return new MockLanguageModelV4({
@@ -188,6 +210,62 @@ test('能力失败：tool-error 事件携带公开错误负载，会话继续到
   const outcome = await session.outcome;
   assert.equal(outcome.status, 'completed', '单次能力失败不终止会话');
   assert.equal(outcome.finishReason, 'stop');
+});
+
+test('模型流中断：outcome 为失败并携带公开错误信息，不得误判为完成', async () => {
+  const model = scriptedModel([interruptedTextStep(1, '回答进行到一半')]);
+  const session = startConversation({
+    model,
+    messages: [{ role: 'user', content: '继续回答' }],
+    capabilities: DEFINITIONS,
+    invoker: successRegistrar({ calls: [] }),
+  });
+
+  const events = await collectEvents(session);
+  assert.ok(
+    events.some((e) => e.type === 'error' && e.message === '模拟模型流中断'),
+    '事件流应携带错误事件',
+  );
+
+  const outcome = await session.outcome;
+  assert.equal(outcome.status, 'error');
+  assert.equal(outcome.error, '模拟模型流中断', 'outcome 应带出流中的公开错误信息');
+  assert.notEqual(outcome.status, 'completed');
+});
+
+test('finishReason 为 error：即使 steps 正常 resolve，outcome 也是失败状态', async () => {
+  const model = scriptedModel([errorFinishStep(1, '部分回答')]);
+  const session = startConversation({
+    model,
+    messages: [{ role: 'user', content: '继续回答' }],
+    capabilities: DEFINITIONS,
+    invoker: successRegistrar({ calls: [] }),
+  });
+
+  const outcome = await session.outcome;
+  assert.equal(outcome.status, 'error');
+  assert.equal(outcome.finishReason, 'error');
+  assert.equal(typeof outcome.error, 'string');
+  assert.ok(outcome.error.length > 0, '失败 outcome 应携带可展示的错误文案');
+  const roles = outcome.messages.map((m) => m.role);
+  assert.ok(roles.includes('assistant'), '已完成步骤的消息仍应保留');
+});
+
+test('取消优先于错误：流出现错误但用户已主动中止时仍为取消', async () => {
+  const controller = new AbortController();
+  const model = scriptedModel([interruptedTextStep(1, '不应按错误归类')]);
+  const session = startConversation({
+    model,
+    messages: [{ role: 'user', content: '打个招呼' }],
+    capabilities: DEFINITIONS,
+    invoker: successRegistrar({ calls: [] }),
+    signal: controller.signal,
+  });
+  controller.abort();
+
+  const outcome = await session.outcome;
+  assert.equal(outcome.status, 'cancelled', '用户中止不算 error');
+  assert.equal(outcome.finishReason, 'abort');
 });
 
 test('取消：cancel 后循环停止，finish(abort)，工具收到已中止信号', async () => {

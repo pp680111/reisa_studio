@@ -277,17 +277,6 @@ export function AppSidebar({
       </div>
       <div className="sidebar-bottom">
         {item('设置', 'settings', 'settings', () => navigate('settings'))}
-        <div className="workspace-profile">
-          <span className="profile-avatar">Z</span>
-          <div>
-            <strong>个人空间</strong>
-            <small>
-              <span className="status-dot" />
-              本地工作区
-            </small>
-          </div>
-          <Icon name="select" size={15} />
-        </div>
       </div>
     </aside>
   );

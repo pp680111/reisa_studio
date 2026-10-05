@@ -36,7 +36,7 @@ export interface EmbeddingBatch {
 }
 
 export interface Embedder {
-  embed(texts: readonly string[]): Promise<EmbeddingBatch>;
+  embed(texts: readonly string[], signal?: AbortSignal): Promise<EmbeddingBatch>;
 }
 
 interface EmbeddingResponse {
@@ -47,18 +47,31 @@ interface EmbeddingResponse {
 /** 与 skb 的 OpenAICompatibleClient Protocol 对齐的最小接口，便于测试注入。 */
 export interface EmbeddingsClientLike {
   embeddings: {
-    create(input: {
-      model: string;
-      input: string[];
-      dimensions: number;
-      encoding_format: 'float';
-    }): Promise<EmbeddingResponse>;
+    create(
+      input: {
+        model: string;
+        input: string[];
+        dimensions: number;
+        encoding_format: 'float';
+      },
+      options?: { signal?: AbortSignal },
+    ): Promise<EmbeddingResponse>;
   };
   close?(): Promise<void> | void;
 }
 
-const sleep = (seconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+/** 可中止等待：中止即拒绝（并清理定时器），保证重试循环遇取消立即停止。 */
+const sleep = (seconds: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, seconds * 1000);
+    if (signal === undefined) return;
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal.reason instanceof Error ? signal.reason : new Error('Embedding wait aborted'));
+    };
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
 
 export interface EmbeddingClientOptions {
   readonly apiKey: string;
@@ -71,7 +84,7 @@ export interface EmbeddingClientOptions {
   readonly maxRetries?: number;
   readonly rateLimitRetryDelaySeconds?: number;
   readonly client?: EmbeddingsClientLike;
-  readonly sleep?: (seconds: number) => Promise<void>;
+  readonly sleep?: (seconds: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export class OpenAICompatibleEmbeddingClient implements Embedder {
@@ -81,7 +94,7 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
   readonly #maxConcurrency: number;
   readonly #maxRetries: number;
   readonly #rateLimitRetryDelaySeconds: number;
-  readonly #sleep: (seconds: number) => Promise<void>;
+  readonly #sleep: (seconds: number, signal?: AbortSignal) => Promise<void>;
   #resolvedClient: EmbeddingsClientLike | undefined;
   readonly #clientProvider: () => Promise<EmbeddingsClientLike>;
 
@@ -122,7 +135,8 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
     return this.#resolvedClient;
   }
 
-  async embed(texts: readonly string[]): Promise<EmbeddingBatch> {
+  async embed(texts: readonly string[], signal?: AbortSignal): Promise<EmbeddingBatch> {
+    signal?.throwIfAborted();
     if (texts.length === 0) return { vectors: [], promptTokens: 0 };
     if (texts.some((text) => typeof text !== 'string' || !text.trim())) {
       throw new Error('Embedding inputs must be non-empty strings');
@@ -133,7 +147,9 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
     }
     // 任一子批失败也要等所有批次（含排队与重试）结束后再抛出——
     // 保证失败批次不会提前释放对账锁（skb 语义，test_failed_round_waits…）
-    const settled = await Promise.allSettled(batches.map((batch) => this.#embedBatch(batch)));
+    const settled = await Promise.allSettled(
+      batches.map((batch) => this.#embedBatch(batch, signal)),
+    );
     const vectors: number[][] = [];
     let totalTokens = 0;
     let hasUsage = true;
@@ -157,9 +173,10 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
 
   async #embedBatch(
     batch: string[],
+    signal?: AbortSignal,
   ): Promise<{ vectors: number[][]; promptTokens: number | null }> {
     const client = await this.#getClient();
-    const response = await this.#createWithRetry(client, batch);
+    const response = await this.#createWithRetry(client, batch, signal);
     return {
       vectors: validatedVectors(response, batch.length, this.#dimensions),
       promptTokens: response.usage?.prompt_tokens ?? null,
@@ -169,25 +186,34 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
   async #createWithRetry(
     client: EmbeddingsClientLike,
     batch: string[],
+    signal?: AbortSignal,
   ): Promise<EmbeddingResponse> {
     for (let attempt = 0; ; attempt += 1) {
+      // 取消优先：每轮重试前先响应中止，已取消的请求不再发起（架构设计 §10.3）。
+      signal?.throwIfAborted();
       try {
-        return await client.embeddings.create({
-          model: this.#model,
-          input: batch,
-          dimensions: this.#dimensions,
-          encoding_format: 'float',
-        });
+        // 取消信号透传 SDK：请求本身可被中止。
+        return await client.embeddings.create(
+          {
+            model: this.#model,
+            input: batch,
+            dimensions: this.#dimensions,
+            encoding_format: 'float',
+          },
+          { signal },
+        );
       } catch (rawError) {
+        // 中止优先于重试分类：取消后立即停止，不进入退避重试。
+        signal?.throwIfAborted();
         const error = classifyError(rawError);
         if (!error.retryable || attempt >= this.#maxRetries) throw error;
         const retryAfter = retryAfterSeconds(rawError);
         if (error.code === 'rate_limited') {
           // 429 反映滑动窗口配额；短退避在窗口饱和时只会浪费重试次数（skb 注释）
-          await this.#sleep(Math.max(retryAfter ?? 0, this.#rateLimitRetryDelaySeconds));
+          await this.#sleep(Math.max(retryAfter ?? 0, this.#rateLimitRetryDelaySeconds), signal);
         } else {
           const delay = retryAfter ?? 0.25 * 2 ** attempt;
-          await this.#sleep(Math.min(delay, 300.0));
+          await this.#sleep(Math.min(delay, 300.0), signal);
         }
       }
     }

@@ -5,12 +5,13 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MetadataDB, EMBEDDING_IDENTITY_KEY } from '../runtime/db.ts';
 import { ChunkStore } from '../runtime/store.ts';
-import { SyncService } from '../runtime/sync.ts';
+import { SyncService, safeMessage } from '../runtime/sync.ts';
 import { KnowledgeBase, ServiceError, uploadsPathFor } from '../runtime/service.ts';
 import { embeddingIdentity, DEFAULT_SETTINGS } from '../runtime/config.ts';
 import { createFakeEmbedder, fakeVector } from './fake-embedder.mjs';
@@ -36,6 +37,7 @@ async function makeStack(options = {}) {
     store,
     embedder: options.embedder === null ? null : embedder,
     sync,
+    ...(options.uploadMaxBytes !== undefined ? { uploadMaxBytes: options.uploadMaxBytes } : {}),
   });
   return {
     dataDir,
@@ -531,4 +533,98 @@ test('fakeVector 与假 embedder 输出可用作向量检索', async () => {
   const v2 = fakeVector('数据库连接', DIM);
   assert.deepEqual(v1, v2);
   assert.equal(v1.length, DIM);
+});
+
+test('safeMessage 剔除文件系统路径：Windows 盘符、UNC、POSIX，保留类别与文件名', () => {
+  const windows = safeMessage(
+    new Error("ENOENT: no such file or directory, open 'C:\\Users\\zst\\secret.md'"),
+  );
+  assert.equal(windows, "ENOENT: no such file or directory, open 'secret.md'");
+  assert.ok(!windows.includes('C:'), '不含盘符');
+  assert.ok(!windows.includes('Users'), '不含目录段');
+  assert.ok(!windows.includes('\\'), '不含路径分隔符');
+
+  const unc = safeMessage(
+    new Error('EPERM: operation not permitted, lstat \\\\server\\share\\docs\\a.md'),
+  );
+  assert.equal(unc, 'EPERM: operation not permitted, lstat a.md');
+  assert.ok(!unc.includes('server'));
+
+  const posix = safeMessage(new Error("EACCES: permission denied, open '/home/zst/docs/notes.txt'"));
+  assert.equal(posix, "EACCES: permission denied, open 'notes.txt'");
+  assert.ok(!posix.includes('/home'));
+
+  // URL 不是文件路径：不得误伤（embedding 端点错误仍可读）
+  const url = safeMessage(new Error('POST http://localhost:1234/v1/embeddings failed with 500'));
+  assert.equal(url, 'POST http://localhost:1234/v1/embeddings failed with 500');
+
+  // 无路径的普通错误原样保留（既有断言依赖 "not configured" 文案）
+  assert.equal(
+    safeMessage(new Error('Embedding service is not configured')),
+    'Embedding service is not configured',
+  );
+});
+
+test('手动索引文件缺失：抛出的错误经脱敏，不含来源目录绝对路径', async () => {
+  const stack = await makeStack();
+  const docs = await mkdtemp(join(tmpdir(), 'kb-docs-'));
+  const path = await writeDoc(docs, 'gone.md', 'content');
+  await stack.service.addSource({ path: docs });
+  await stack.sync.reconcileAll();
+  const document = stack.service.listDocuments().items[0];
+
+  await unlink(path);
+  await assert.rejects(
+    () => stack.sync.indexDocument(document?.id ?? ''),
+    (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.ok(!message.includes(docs), '不含来源目录绝对路径');
+      assert.ok(!message.includes(tmpdir()), '不含系统临时目录');
+      assert.match(message, /gone\.md/, '保留文件名与错误类别');
+      return true;
+    },
+  );
+  await stack.cleanup();
+  await rm(docs, { recursive: true, force: true });
+});
+
+test('uploadMaxBytes 生效：超限拒绝且不落盘，恰好等于上限放行', async () => {
+  const stack = await makeStack({ uploadMaxBytes: 8 });
+  const uploadsDir = uploadsPathFor(stack.dataDir);
+
+  await assert.rejects(
+    () => stack.service.upload({ filename: 'big.txt', data: Buffer.from('a'.repeat(10), 'utf-8') }),
+    (error) => {
+      assert.ok(error instanceof ServiceError);
+      assert.equal(error.code, 'upload_too_large');
+      assert.match(error.message, /10/, '文案含实际大小');
+      assert.match(error.message, /8/, '文案含限制大小');
+      return true;
+    },
+  );
+  assert.equal(existsSync(uploadsDir), false, '拒绝发生在写盘之前：uploads 目录未被创建');
+
+  // 恰好等于上限放行
+  const receipt = await stack.service.upload({
+    filename: 'exact.txt',
+    data: Buffer.from('a'.repeat(8), 'utf-8'),
+  });
+  assert.equal(receipt.name, 'exact.txt');
+  assert.equal((await readFile(join(uploadsDir, 'exact.txt'))).length, 8);
+  await stack.cleanup();
+});
+
+test('未配置 uploadMaxBytes 时使用默认上限，小文件上传不受影响', async () => {
+  const stack = await makeStack();
+  const receipt = await stack.service.upload({
+    filename: 'small.txt',
+    data: Buffer.from('a'.repeat(100), 'utf-8'),
+  });
+  assert.equal(receipt.name, 'small.txt');
+  assert.equal(
+    DEFAULT_SETTINGS.uploadMaxBytes,
+    25 * 1024 * 1024,
+    '默认上限保持 25 MiB（设置页展示口径）',
+  );
+  await stack.cleanup();
 });

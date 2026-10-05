@@ -14,10 +14,18 @@ import { QuickSwitcher } from './QuickSwitcher';
 import { ResultContainer } from './ResultContainer';
 import { navigationModules } from './navigation.mjs';
 import { isBoolean, isStrings, isTheme, usePreference } from './preferences';
+import {
+  deriveEnabledModules,
+  toRuntimeStates,
+  toRuntimeStatus,
+  type ModuleRuntimeStatus,
+} from './moduleRuntime';
 
 const initialConversation = createConversation();
 /** 会话列表分页大小；上一批满页时侧栏显示「加载更多」。 */
 const CONVERSATION_PAGE_SIZE = 20;
+/** 内置模块 UI 清单的 id 列表（模块常量，启动后不变）。 */
+const MODULE_IDS = modules.map((module) => module.id);
 const sampleConversation: Conversation = {
   id: 'sample-brand',
   title: '品牌灵感与创作',
@@ -44,11 +52,12 @@ export function AppShell() {
   const [narrow, setNarrow] = useState(window.innerWidth <= 680);
   const collapsed = narrow || collapsedPreference;
   const [theme, setTheme] = usePreference('theme', 'system', isTheme);
-  const [enabled, setEnabled] = usePreference(
-    'enabled',
-    modules.map((module) => module.id),
-    isStrings,
-  );
+  // 模块启用集合以宿主为唯一来源（架构设计 §10）：bootstrap 从 reisa/modules/list
+  // 对齐，之后由宿主状态事件实时维护；浏览器预览（无 bridge）下状态为空 → 全部可用。
+  const [runtimeStates, setRuntimeStates] = useState<Record<string, ModuleRuntimeStatus>>({});
+  // 桌面模式下等宿主状态就绪后再挂载模块页面，避免启动时对未启用模块发起页面调用
+  const [moduleStatesLoaded, setModuleStatesLoaded] = useState(false);
+  const enabled = useMemo(() => deriveEnabledModules(MODULE_IDS, runtimeStates), [runtimeStates]);
   const [pinned, setPinned] = usePreference<string[]>('pinned', [], isStrings);
   const [recent, setRecent] = usePreference<string[]>('recentModules', [], isStrings);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -58,9 +67,7 @@ export function AppShell() {
   const [notice, setNotice] = useState('');
   const [liveCapabilities, setLiveCapabilities] = useState<ReisaCapability[] | null>(null);
   const [modelLabel, setModelLabel] = useState('模型未配置');
-  const [runtimeStates, setRuntimeStates] = useState<
-    Record<string, { state: string; error?: string }>
-  >({});
+  const togglePending = useRef(new Set<string>());
   const availableModules = navigationModules(modules, enabled, pinned);
   const capabilityCount =
     liveCapabilities?.length ??
@@ -96,23 +103,22 @@ export function AppShell() {
         setActiveConversationId(created.id);
       }
       setLiveCapabilities(await bridge.conversation.listCapabilities());
-      const moduleStates = await bridge.conversation.listModules();
-      const states: Record<string, string> = {};
-      for (const item of moduleStates) states[item.id] = item.state;
-      setRuntimeStates(
-        Object.fromEntries(moduleStates.map((item) => [item.id, { state: item.state }])),
-      );
-      // 运行时模块的启用状态以宿主为准；非运行时模块保留本地偏好
-      setEnabled((previous) => {
-        const withoutRuntime = previous.filter((id) => !(id in states));
-        const activeRuntime = Object.entries(states)
-          .filter(([, state]) => state === 'active')
-          .map(([id]) => id);
-        return [...withoutRuntime, ...activeRuntime];
-      });
+      // 初始启用集合来自宿主状态（不再读 localStorage 副本）
+      setRuntimeStates(toRuntimeStates(await bridge.conversation.listModules()));
+      setModuleStatesLoaded(true);
       const connection = await bridge.settings.getModelConnection();
       setModelLabel(connection?.modelId ?? '模型未配置');
     })();
+  }, [bridge]);
+  // 订阅宿主生命周期状态：activating/deactivating 过渡与 failed 原因实时可见
+  useEffect(() => {
+    if (!bridge) return;
+    return bridge.conversation.onModuleState((status) => {
+      setRuntimeStates((previous) => ({
+        ...previous,
+        [status.id]: toRuntimeStatus(status),
+      }));
+    });
   }, [bridge]);
   const navigate = (nextRoute: string, conversationId?: string) => {
     if (
@@ -192,10 +198,10 @@ export function AppShell() {
   };
   const toggleModule = (id: string) => {
     const disabling = enabled.includes(id);
-    const apply = () => {
-      setEnabled((previous) =>
-        disabling ? previous.filter((item) => item !== id) : [...previous, id],
-      );
+    // 过渡/处理期间忽略重复操作（按钮同时禁用）
+    if (togglePending.current.has(id)) return;
+    // 停用成功后的界面收尾：撤销工作空间入口、关闭已打开的模块设置
+    const settleAfterDisable = () => {
       if (disabling && route === id) {
         setRoute('modules');
         setNotice('当前模块已停用，工作空间入口已撤销。');
@@ -203,20 +209,36 @@ export function AppShell() {
       if (disabling && settingsModuleId === id) setSettingsModuleId(null);
     };
     if (!bridge) {
-      apply();
-      return;
-    }
-    void bridge.conversation.setModuleEnabled(id, !disabling).then((result) => {
-      if (result.error) {
-        setNotice(`模块${disabling ? '停用' : '启用'}失败：${result.error}`);
-        return;
-      }
-      apply();
       setRuntimeStates((previous) => ({
         ...previous,
-        [id]: { state: result.state ?? (disabling ? 'disabled' : 'active') },
+        [id]: toRuntimeStatus({ state: disabling ? 'disabled' : 'active' }),
       }));
-    });
+      settleAfterDisable();
+      return;
+    }
+    togglePending.current.add(id);
+    void bridge.conversation
+      .setModuleEnabled(id, !disabling)
+      .then(async (result) => {
+        if (result.error) {
+          // 真实状态（failed + 原因）由宿主状态事件送达，这里只提示失败
+          setNotice(`模块${disabling ? '停用' : '启用'}失败：${result.error}`);
+          return;
+        }
+        // 非运行时模块没有状态事件，按返回结果对齐；运行时模块以事件为准
+        setRuntimeStates((previous) => ({
+          ...previous,
+          [id]: toRuntimeStatus({
+            state: result.state ?? (disabling ? 'disabled' : 'active'),
+          }),
+        }));
+        settleAfterDisable();
+        // 启停改变了能力集合：重新拉取，能力计数与集合保持实时
+        setLiveCapabilities(await bridge.conversation.listCapabilities());
+      })
+      .finally(() => {
+        togglePending.current.delete(id);
+      });
   };
   const togglePin = (id: string) =>
     setPinned((previous) =>
@@ -389,13 +411,14 @@ export function AppShell() {
           </div>
           {modules.map((module) => {
             const Page = module.navigation?.page;
+            // 停用即卸载：未启用模块不渲染页面，轮询等副作用随卸载停止，重新启用重新初始加载；
+            // 启用模块用 hidden 保持挂载，切页不丢编辑状态。
+            // 桌面模式等宿主状态就绪后再挂载，启动时未启用模块的页面不会挂载。
+            const mounted =
+              Page !== undefined && enabled.includes(module.id) && (!bridge || moduleStatesLoaded);
             return (
-              Page && (
-                <div
-                  className="page-outlet"
-                  key={module.id}
-                  hidden={route !== module.id || !enabled.includes(module.id)}
-                >
+              mounted && (
+                <div className="page-outlet" key={module.id} hidden={route !== module.id}>
                   <Page
                     openSettings={() => setSettingsModuleId(module.id)}
                     notify={setNotice}

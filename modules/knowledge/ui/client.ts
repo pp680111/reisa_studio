@@ -1,6 +1,6 @@
 /**
  * 知识库页面服务客户端（renderer 侧）。
- * 结构化访问宿主暴露的受限通道 window.reisa.modulePage / moduleConfig；
+ * 结构化访问宿主暴露的受限通道 window.reisa.modulePage；
  * 不导入宿主代码（边界检查：模块 UI 只依赖 SDK 与共享 UI 包）。
  */
 

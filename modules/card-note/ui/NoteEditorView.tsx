@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, EmptyState, Field, Icon, IconButton } from '@reisa/ui';
-import { parsePageRange, validateQuote } from '../runtime/validation.ts';
-import { tabularTextToMarkdown } from '../runtime/markdown.ts';
+import { parsePageRange, validateQuote } from '../domain/validation.ts';
+import { tabularTextToMarkdown } from '../domain/markdown.ts';
 import {
   deleteNote,
   ensureTag,

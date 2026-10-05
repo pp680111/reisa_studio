@@ -12,7 +12,8 @@ import {
   type SourceDocumentStats,
 } from './db.ts';
 import { ChunkStore, type SearchHit } from './store.ts';
-import { DocumentExcludedError, SyncService, readDocumentText } from './sync.ts';
+import { DocumentExcludedError, SyncService, readDocumentText, safeMessage } from './sync.ts';
+import { DEFAULT_SETTINGS } from './config.ts';
 import type { Embedder } from './embedding.ts';
 
 /**
@@ -50,6 +51,8 @@ export interface KnowledgeBaseOptions {
   readonly store: ChunkStore;
   readonly embedder: Embedder | null;
   readonly sync: SyncService;
+  /** 上传单文件大小上限（字节）；来自模块设置 uploadMaxBytes，缺省用默认设置。 */
+  readonly uploadMaxBytes?: number;
   readonly logger?: ModuleLogger;
 }
 
@@ -59,6 +62,7 @@ export class KnowledgeBase {
   readonly #store: ChunkStore;
   readonly #embedder: Embedder | null;
   readonly #sync: SyncService;
+  readonly #uploadMaxBytes: number;
   readonly #logger: ModuleLogger | undefined;
 
   constructor(options: KnowledgeBaseOptions) {
@@ -67,6 +71,7 @@ export class KnowledgeBase {
     this.#store = options.store;
     this.#embedder = options.embedder;
     this.#sync = options.sync;
+    this.#uploadMaxBytes = options.uploadMaxBytes ?? DEFAULT_SETTINGS.uploadMaxBytes;
     this.#logger = options.logger;
   }
 
@@ -91,10 +96,17 @@ export class KnowledgeBase {
    * 有意偏差：skb 中"未配置 embedding + hybrid"会抛 ValueError（HTTP 500），
    * 与其 README 的降级承诺矛盾；迁移实现统一走降级路径，保证 Agent 检索能力始终可用。
    */
-  async search(options: { query: string; mode?: string; topK?: number }): Promise<SearchOutcome> {
+  async search(options: {
+    query: string;
+    mode?: string;
+    topK?: number;
+    /** 取消信号：中止向量请求（架构设计 §10.3）；全文检索为本地快查，不做中途取消。 */
+    signal?: AbortSignal;
+  }): Promise<SearchOutcome> {
     const mode = options.mode ?? 'hybrid';
     const topK = options.topK ?? 10;
     const query = options.query;
+    const signal = options.signal;
     if (mode !== 'hybrid' && mode !== 'vector' && mode !== 'full_text') {
       throw new ServiceError('mode_unsupported', 'mode must be hybrid, vector, or full_text');
     }
@@ -111,9 +123,11 @@ export class KnowledgeBase {
     let queryVector: number[] | null = null;
     if (this.#embedder !== null) {
       try {
-        const batch = await this.#embedder.embed([query]);
+        const batch = await this.#embedder.embed([query], signal);
         queryVector = batch.vectors[0] ?? null;
       } catch (error) {
+        // 取消优先于降级：已中止的检索不再转为全文降级结果（架构设计 §10.3）。
+        signal?.throwIfAborted();
         if (mode === 'vector') {
           throw new ServiceError(
             'embedding_unavailable',
@@ -293,10 +307,8 @@ export class KnowledgeBase {
     try {
       parsed = await readDocumentText(path);
     } catch (error) {
-      throw new ServiceError(
-        'document_unreadable',
-        String(error instanceof Error ? error.message : error),
-      );
+      // fs 错误消息通常含本机绝对路径：公开面只返回脱敏后的类别与文件名
+      throw new ServiceError('document_unreadable', safeMessage(error));
     }
     const offset = options.offset ?? 0;
     const limit = options.limit ?? 20_000;
@@ -306,7 +318,10 @@ export class KnowledgeBase {
   }
 
   /** 上传单篇文档落入内置 uploads 来源：同名覆盖，后台自动重新索引。 */
-  async upload(options: { filename: string; data: Buffer }): Promise<UploadReceipt> {
+  async upload(
+    options: { filename: string; data: Buffer },
+    signal?: AbortSignal,
+  ): Promise<UploadReceipt> {
     const suffix =
       basename(options.filename)
         .toLowerCase()
@@ -319,6 +334,15 @@ export class KnowledgeBase {
     }
     if (!options.data.length || !options.data.toString('utf8').trim()) {
       throw new ServiceError('upload_empty', 'Uploaded content must not be empty');
+    }
+    // 取消检查在首个副作用（建目录/写文件）之前。
+    signal?.throwIfAborted();
+    // 大小上限在写盘之前校验（字节语义，恰好等于上限放行）；页面与 Agent 上传共用此入口。
+    if (options.data.byteLength > this.#uploadMaxBytes) {
+      throw new ServiceError(
+        'upload_too_large',
+        `上传内容 ${options.data.byteLength} 字节，超过大小上限 ${this.#uploadMaxBytes} 字节`,
+      );
     }
     const name = options.filename.replaceAll('\\', '/').split('/').pop()?.trim() || 'upload';
     const source = await this.ensureUploadsSource();

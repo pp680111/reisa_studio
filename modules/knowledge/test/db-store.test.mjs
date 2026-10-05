@@ -273,7 +273,7 @@ test('close() 释放连接后索引目录可被删除（重配置重建路径）
   await store.replaceDocument([makeRecord('doc-a', 0, 'hello world')]);
   assert.ok((await store.chunkCount()) === 1);
   await store.close();
-  // 指纹变更时 #initialize 需要 rm 整个索引目录：连接未释放时 Windows 下会 EBUSY
+  // 指纹变更时 #buildServices 需要 rm 整个索引目录：连接未释放时 Windows 下会 EBUSY
   await rm(indexDir, { recursive: true, force: true });
   const reopened = await ChunkStore.open(indexDir, 16);
   assert.equal(await reopened.chunkCount(), 0, '删除后为全新空索引');

@@ -219,7 +219,14 @@ export class SyncService {
         throw new DocumentExcludedError(document.relPath);
       }
       const located = locateDocument(source.path, document.relPath);
-      const info = await stat(located.path, { bigint: true });
+      let info;
+      try {
+        info = await stat(located.path, { bigint: true });
+      } catch (error) {
+        // 抛出前经 safeMessage 去路径（保留错误类别与文件名）；完整原始错误留模块日志
+        this.#logDocumentFailure('document_stat_failed', documentId, document.relPath, error);
+        throw new Error(safeMessage(error));
+      }
       await this.#indexFile(
         source,
         located.scanRoot,
@@ -270,6 +277,7 @@ export class SyncService {
     try {
       parsed = await parseDocument(path);
     } catch (error) {
+      this.#logDocumentFailure('document_parse_failed', documentId, snapshot.relPath, error);
       recordFailure(safeMessage(error));
       return;
     }
@@ -300,6 +308,7 @@ export class SyncService {
       const batch = await this.#embedder.embed(chunks.map((chunk) => chunk.content));
       vectors = batch.vectors;
     } catch (error) {
+      this.#logDocumentFailure('document_embed_failed', documentId, snapshot.relPath, error);
       recordFailure(safeMessage(error));
       return;
     }
@@ -332,6 +341,20 @@ export class SyncService {
   #exceedsAutoLimit(size: number): boolean {
     // autoIndexMaxBytes 为 0 表示关闭门槛
     return this.#autoIndexMaxBytes > 0 && size > this.#autoIndexMaxBytes;
+  }
+
+  /** 诊断级完整错误只写模块日志；公开面（document.error）由调用方另行脱敏。 */
+  #logDocumentFailure(
+    event: string,
+    documentId: string,
+    relPath: string,
+    error: unknown,
+  ): void {
+    this.#logger?.error(event, {
+      documentId,
+      relPath,
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 
   async #deferToManual(base: DocumentInput, snapshot: FileSnapshot): Promise<void> {
@@ -371,6 +394,8 @@ export class SyncService {
       this.#wakeResolvers.clear();
       await sleep(this.#debounceSeconds);
       this.#wakeResolvers.clear();
+      // 防抖期间被停止：不再开启新一轮对账（架构设计 §10.2，stop 后拒绝新工作）。
+      if (this.#stopping) break;
       await this.reconcileAll();
     }
   }
@@ -389,9 +414,37 @@ export class SyncService {
   }
 }
 
-/** 错误消息安全化（skb _safe_message）：NFKC 归一化 + 300 字符截断。 */
-function safeMessage(error: unknown): string {
-  const message = (error instanceof Error ? error.message : String(error)).normalize('NFKC');
+/** 错误文案中的路径字符集：到空白、引号或闭合标点为止（路径中不会出现这些字符）。 */
+const PATH_CHAR = "[^\\s'\"<>|*，。）)：；]";
+
+/**
+ * 错误文案里的文件系统路径模式：Windows 盘符、UNC 与 POSIX 绝对路径。
+ * 盘符模式带负向断言（前面不能是字母），避免把 http:// 等 URL 误判成路径。
+ */
+const FS_PATH_PATTERNS: readonly RegExp[] = [
+  new RegExp(`(?<![A-Za-z])[A-Za-z]:[\\\\/]${PATH_CHAR}*`, 'g'),
+  new RegExp(`\\\\\\\\${PATH_CHAR}+(?:[\\\\/]${PATH_CHAR}+)+`, 'g'),
+  new RegExp(`(?<=^|[\\s'"（(，；])/${PATH_CHAR}+`, 'g'),
+];
+
+/** 路径只保留最后一段（文件名或末级目录名），目录结构不进入公开文案。 */
+function lastPathSegment(path: string): string {
+  const stripped = path.replaceAll('\\', '/').replace(/[\\\\/]+$/, '');
+  const index = stripped.lastIndexOf('/');
+  return index >= 0 ? stripped.slice(index + 1) : stripped;
+}
+
+/**
+ * 错误消息公开化（skb _safe_message 迁移强化版）：NFKC 归一化 + 剔除文件系统路径
+ * （保留错误类别与文件名，不含目录）+ 300 字符截断；保证写入 document.error
+ * 与公开 DTO 的文案不含本机绝对路径。完整原始错误由调用方写模块日志（架构设计 §10.3）。
+ */
+export function safeMessage(error: unknown): string {
+  const normalized = (error instanceof Error ? error.message : String(error)).normalize('NFKC');
+  let message = normalized;
+  for (const pattern of FS_PATH_PATTERNS) {
+    message = message.replace(pattern, lastPathSegment);
+  }
   return message ? message.slice(0, 300) : error instanceof Error ? error.name : 'Error';
 }
 
@@ -401,7 +454,14 @@ function sleep(seconds: number): Promise<void> {
 
 /** 解析文档的文件路径与扫描根（skb _locate_document：单文件来源的扫描根是父目录）。 */
 function locateDocument(root: string, relPath: string): { path: string; scanRoot: string } {
-  if (existsSync(root) && statSync(root).isDirectory()) {
+  let rootIsDirectory = false;
+  try {
+    rootIsDirectory = existsSync(root) && statSync(root).isDirectory();
+  } catch {
+    // stat 竞态失败按非目录处理：后续 stat 会以脱敏后的错误失败
+    rootIsDirectory = false;
+  }
+  if (rootIsDirectory) {
     return { path: join(root, relPath), scanRoot: root };
   }
   return { path: root, scanRoot: dirname(root) };

@@ -29,6 +29,17 @@ const api = {
     listModules: () => ipcRenderer.invoke('reisa/modules/list'),
     setModuleEnabled: (id: string, enabled: boolean) =>
       ipcRenderer.invoke('reisa/modules/setEnabled', { id, enabled }),
+    // 宿主模块生命周期状态事件（架构设计 §10）：id/version/state/error
+    onModuleState: (
+      listener: (status: { id: string; version: string; state: string; error?: string }) => void,
+    ) => {
+      const handler = (
+        _event: unknown,
+        status: { id: string; version: string; state: string; error?: string },
+      ) => listener(status);
+      ipcRenderer.on('reisa/module/state', handler as never);
+      return () => ipcRenderer.removeListener('reisa/module/state', handler as never);
+    },
     onEvent: (listener: (payload: { conversationId: string; event: unknown }) => void) => {
       const handler = (_event: unknown, payload: { conversationId: string; event: unknown }) =>
         listener(payload);
@@ -44,7 +55,7 @@ const api = {
     getPrompt: () => ipcRenderer.invoke('reisa/settings/getPrompt'),
     setPrompt: (prompt: string) => ipcRenderer.invoke('reisa/settings/setPrompt', prompt),
   },
-  // 模块页面服务与私有配置（迁移设计文档 §8.1）：受限通道，action 白名单在主进程校验
+  // 模块页面服务（迁移设计文档 §8.1）：受限通道，action 白名单在主进程校验
   modulePage: {
     invoke: (moduleId: string, action: string, input?: unknown) =>
       ipcRenderer.invoke('reisa/module/page', { moduleId, action, input }),
@@ -52,12 +63,6 @@ const api = {
       ipcRenderer.invoke('reisa/module/pickPath', { mode, extensions }),
     pickSavePath: (suggestedName?: string, extensions?: string[]) =>
       ipcRenderer.invoke('reisa/module/pickSavePath', { suggestedName, extensions }),
-  },
-  moduleConfig: {
-    get: (moduleId: string, key: string) =>
-      ipcRenderer.invoke('reisa/module/config/get', { moduleId, key }),
-    set: (moduleId: string, key: string, value: unknown) =>
-      ipcRenderer.invoke('reisa/module/config/set', { moduleId, key, value }),
   },
 };
 

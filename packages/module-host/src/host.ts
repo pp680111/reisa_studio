@@ -87,6 +87,8 @@ export class ModuleHost {
   readonly #activations = new Map<string, ModuleActivation>();
   readonly #controllers = new Map<string, AbortController>();
   readonly #listeners = new Set<StateListener>();
+  /** 模块在途调用（工具 + 页面）集合：停用等待其清空（架构设计 §10.2）。 */
+  readonly #inFlight = new Map<string, Set<Promise<unknown>>>();
 
   constructor(options: ModuleHostOptions) {
     this.#options = options;
@@ -162,32 +164,40 @@ export class ModuleHost {
     const signal =
       signals.length > 1 ? AbortSignal.any(signals) : (signals[0] ?? new AbortController().signal);
     const moduleContext: ToolExecutionContext = { invocationId, signal };
-
-    try {
-      // 输入已通过声明校验，此处断言为契约声明的 JSON 值。
-      const result = await registration.execute(input as JsonValue, moduleContext);
-      // 取消优先于结果：信号已中止的调用不交付成功产物（架构设计 §10.3），即使处理器实际完成。
-      if (signal.aborted) {
-        return toolFailure('CANCELLED', '调用已取消', invocationId);
-      }
-      if (result.status === 'success' && registration.definition.outputSchema) {
-        const outputIssues = validateAgainstSchema(
-          registration.definition.outputSchema,
-          result.value,
-        );
-        if (outputIssues.length > 0) {
-          return toolFailure('EXECUTION_FAILED', '结果与声明的输出 Schema 不符', invocationId, {
-            details: issuesToJson(outputIssues),
-          });
-        }
-      }
-      return result;
-    } catch (error) {
-      if (signal.aborted) {
-        return toolFailure('CANCELLED', '调用已取消', invocationId);
-      }
-      return toolFailure('EXECUTION_FAILED', describeError(error), invocationId);
+    // 取消优先于执行：已中止的调用不进入处理器，避免已取消的请求产生副作用（架构设计 §10.3）。
+    if (signal.aborted) {
+      return toolFailure('CANCELLED', '调用已取消', invocationId);
     }
+    // 在途登记：停用等待本次调用真正结束（架构设计 §10.2）。
+    return this.#trackInFlight(moduleId, async () => {
+      try {
+        // 输入已通过声明校验，此处断言为契约声明的 JSON 值。
+        const result = await registration.execute(input as JsonValue, moduleContext);
+        // 取消优先于结果：信号已中止的调用不交付成功产物（架构设计 §10.3），即使处理器实际完成。
+        if (signal.aborted) {
+          return toolFailure('CANCELLED', '调用已取消', invocationId);
+        }
+        if (result.status === 'success' && registration.definition.outputSchema) {
+          const outputIssues = validateAgainstSchema(
+            registration.definition.outputSchema,
+            result.value,
+          );
+          if (outputIssues.length > 0) {
+            return toolFailure('EXECUTION_FAILED', '结果与声明的输出 Schema 不符', invocationId, {
+              details: issuesToJson(outputIssues),
+            });
+          }
+        }
+        return result;
+      } catch (error) {
+        if (signal.aborted) {
+          return toolFailure('CANCELLED', '调用已取消', invocationId);
+        }
+        // 详细内部错误（可能含私有路径等）只留宿主运行层日志；公开面返回稳定文案（架构设计 §10.3）。
+        this.#options.logger?.error(`能力 ${capabilityId} 执行失败：${describeError(error)}`);
+        return toolFailure('EXECUTION_FAILED', '模块能力执行失败', invocationId);
+      }
+    });
   }
 
   /** 适配层 `CapabilityInvoker` 兼容入口；宿主把它交给 startConversation。 */
@@ -199,6 +209,19 @@ export class ModuleHost {
     return (capabilityId, input, context) => this.invoke(capabilityId, input, context);
   }
 
+  /**
+   * 页面/管理面调用的宿主入口（架构设计 §6.4；迁移设计文档 §8.1 受限通道经此执行）：
+   * 与工具调用共用在途登记——非 active 状态拒绝执行；停用等待页面调用真正结束；
+   * 传给页面服务的信号与模块停用信号关联，停用即取消。
+   */
+  runTracked<T>(moduleId: string, execute: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = this.#controllers.get(moduleId);
+    if (this.#states.get(moduleId) !== 'active' || controller === undefined) {
+      return Promise.reject(new Error(`模块 ${moduleId} 未激活，调用被拒绝`));
+    }
+    return this.#trackInFlight(moduleId, () => execute(controller.signal));
+  }
+
   async activate(moduleId: string): Promise<void> {
     const module = this.#modules.get(moduleId);
     if (!module) throw new Error(`模块 ${moduleId} 未登记`);
@@ -208,6 +231,9 @@ export class ModuleHost {
       throw new Error(`模块 ${moduleId} 当前状态 ${state}，无法激活`);
     }
     this.#setState(moduleId, 'activating');
+    // 仅当 module.activate 成功返回后才存在需要回滚的 activation；
+    // 更早的失败（协议版本不匹配、servicesFactory 失败）没有已创建的模块资源。
+    let activation: ModuleActivation | undefined;
     try {
       if (module.protocolVersion !== HOST_PROTOCOL_VERSION) {
         throw new Error(
@@ -227,7 +253,7 @@ export class ModuleHost {
         invoke: (capabilityId, input, invocationContext) =>
           this.invoke(capabilityId, input, invocationContext),
       };
-      const activation = await module.activate(context);
+      activation = await module.activate(context);
       const registrations = [...(activation.tools ?? [])];
       const issues = validateRegistrations(moduleId, registrations);
       if (issues.length > 0) {
@@ -239,11 +265,29 @@ export class ModuleHost {
       this.#errors.delete(moduleId);
       this.#setState(moduleId, 'active');
     } catch (error) {
+      // activation 已取得时模块可能创建过真实资源（数据库句柄、后台服务），回滚释放；
+      // 回滚自身的失败只作为次要错误记录，不吞掉/替换原始失败原因。
+      let rollbackFailure: string | undefined;
+      if (activation !== undefined) {
+        try {
+          await activation.deactivate();
+        } catch (rollbackError) {
+          rollbackFailure = describeError(rollbackError);
+          this.#options.logger?.warn(
+            `模块 ${moduleId} 激活失败回滚时 deactivate 再度失败：${rollbackFailure}`,
+          );
+        }
+      }
       this.#registry.remove(moduleId);
       this.#activations.delete(moduleId);
       this.#controllers.delete(moduleId);
       this.#services.delete(moduleId);
-      this.#errors.set(moduleId, describeError(error));
+      this.#errors.set(
+        moduleId,
+        rollbackFailure === undefined
+          ? describeError(error)
+          : `${describeError(error)}（回滚 deactivate 失败：${rollbackFailure}）`,
+      );
       this.#setState(moduleId, 'failed');
       throw error;
     }
@@ -251,7 +295,8 @@ export class ModuleHost {
 
   /**
    * 停用顺序（架构设计 §10.2）：拒绝新调用 → 撤销工具注册 → 传递取消信号 →
-   * 等待处理器结束并释放资源 → 卸载。停用不删除业务数据。
+   * 等待在途工具与页面调用真正结束（不设时限，不可中断的操作让模块停留在 deactivating）→
+   * 模块清理 → 卸载。停用不删除业务数据。
    */
   async deactivate(moduleId: string): Promise<void> {
     const state = this.#states.get(moduleId);
@@ -267,14 +312,38 @@ export class ModuleHost {
     this.#setState(moduleId, 'deactivating');
     this.#registry.remove(moduleId);
     this.#controllers.get(moduleId)?.abort();
+    await this.#waitForInFlight(moduleId);
     const activation = this.#activations.get(moduleId);
     try {
       await activation?.deactivate();
     } finally {
       this.#activations.delete(moduleId);
       this.#controllers.delete(moduleId);
+      this.#inFlight.delete(moduleId);
       this.#services.delete(moduleId);
       this.#setState(moduleId, 'disabled');
+    }
+  }
+
+  /** 在途登记：调用 Promise 归入模块集合，停用时等待集合清空（架构设计 §10.2）。 */
+  #trackInFlight<T>(moduleId: string, run: () => Promise<T>): Promise<T> {
+    const pending = this.#inFlight.get(moduleId) ?? new Set<Promise<unknown>>();
+    this.#inFlight.set(moduleId, pending);
+    const execution = run();
+    pending.add(execution);
+    void execution.then(
+      () => pending.delete(execution),
+      () => pending.delete(execution),
+    );
+    return execution;
+  }
+
+  /** 等待模块全部在途调用结束；无超时上限。 */
+  async #waitForInFlight(moduleId: string): Promise<void> {
+    const pending = this.#inFlight.get(moduleId);
+    if (pending === undefined) return;
+    while (pending.size > 0) {
+      await Promise.allSettled([...pending]);
     }
   }
 
