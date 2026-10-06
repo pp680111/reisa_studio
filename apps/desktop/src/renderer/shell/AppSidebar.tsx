@@ -3,6 +3,7 @@ import type { ModuleContribution } from '@reisa/module-sdk';
 import { Icon, IconButton } from '@reisa/ui';
 import type { Conversation } from '../conversation/ConversationView';
 import { isBoolean, usePreference } from './preferences';
+import brandIcon from '../../../assets/icon.png';
 
 const shortcutModifier = /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl';
 export function AppSidebar({
@@ -82,7 +83,7 @@ export function AppSidebar({
       <div className="sidebar-top">
         <div className="brand">
           <div className="brand-symbol">
-            R<span />
+            <img src={brandIcon} alt="" />
           </div>
           <div className="brand-copy">
             <strong>Reisa Studio</strong>

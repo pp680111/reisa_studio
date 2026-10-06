@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { copyFile } from 'node:fs/promises';
 // @lancedb/lancedb 是原生依赖（napi 预编译），必须保持外部引用并在安装包中携带；
 // apache-arrow 同样外部化，避免与 lancedb 内部解析产生双实例（迁移设计文档 §10.1）。
 await build({
@@ -17,3 +18,5 @@ await build({
   external: ['electron'],
   outfile: 'dist-electron/preload.cjs',
 });
+// 窗口/任务栏图标随 main.cjs 落盘，开发与打包后均从 __dirname 读取
+await copyFile('assets/icon.png', 'dist-electron/icon.png');

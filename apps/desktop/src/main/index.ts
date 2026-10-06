@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage } from 'electron';
 import { join } from 'node:path';
 import { testModelConnection } from '@reisa/agent-adapter';
 import { createAppRuntime, getModulePageService, type AppRuntime } from '../composition/runtime.ts';
@@ -35,6 +35,9 @@ async function createWindow() {
   } catch {
     // 状态读取失败时用默认尺寸
   }
+  // 窗口/任务栏图标：开发与打包后路径一致，均取 main.cjs 同级的 icon.png
+  // （由 scripts/build-electron.mjs 从 apps/desktop/assets/icon.png 拷贝而来）
+  const icon = nativeImage.createFromPath(join(__dirname, 'icon.png'));
   const window = new BrowserWindow({
     ...(bounds.maximized ? { width: 1440, height: 940 } : bounds),
     minWidth: 480,
@@ -42,6 +45,7 @@ async function createWindow() {
     title: 'Reisa Studio',
     backgroundColor: '#f8f8fb',
     autoHideMenuBar: true,
+    ...(icon.isEmpty() ? {} : { icon }),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
