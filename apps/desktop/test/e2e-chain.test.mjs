@@ -78,7 +78,7 @@ test('端到端：运行时装配 → 测试模块能力调用 → 结果与记�
   const userData = await mkdtemp(join(tmpdir(), 'reisa-e2e-'));
   const runtime = await createAppRuntime(userData);
 
-  // 组合根已接入知识库运行模块：能力集合 = 内置知识库能力 + 测试夹具模块
+  // 组合根已接入知识库/卡片笔记/待办运行模块：能力集合 = 内置模块能力 + 测试夹具模块
   runtime.host.register(createTesterModule());
   await runtime.host.activate('tester');
   assert.equal(runtime.host.getState('tester'), 'active');
@@ -93,6 +93,11 @@ test('端到端：运行时装配 → 测试模块能力调用 → 结果与记�
       'knowledge/search',
       'knowledge/upload_document',
       'tester/upper',
+      'todo/get_todo',
+      'todo/list_categories',
+      'todo/list_progress',
+      'todo/list_todos',
+      'todo/update_todo_status',
     ],
   );
 

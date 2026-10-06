@@ -16,6 +16,7 @@ import type { JsonValue } from '@reisa/module-sdk';
 import type { LanguageModel } from 'ai';
 import { createKnowledgeRuntime } from '@reisa/module-knowledge/runtime';
 import { createCardNoteRuntime } from '@reisa/module-card-note/runtime';
+import { createTodoRuntime } from '@reisa/module-todo/runtime';
 
 // Electron 主进程内为 safeStorage API；纯 Node（测试）下 electron 包导出二进制路径，无此 API
 const safeStorage = (
@@ -97,6 +98,15 @@ const RUNTIME_MODULES: readonly {
       createCardNoteRuntime({
         registerPageService: (invoke) => {
           modulePageServices.set('card-note', invoke);
+        },
+      }),
+  },
+  {
+    id: 'todo',
+    create: () =>
+      createTodoRuntime({
+        registerPageService: (invoke) => {
+          modulePageServices.set('todo', invoke);
         },
       }),
   },

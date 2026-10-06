@@ -25,6 +25,7 @@
     "@reisa/module-host": "workspace:*",
     "@reisa/module-knowledge": "workspace:*",
     "@reisa/module-sdk": "workspace:*",
+    "@reisa/module-todo": "workspace:*",
     "@reisa/ui": "workspace:*",
     "@sinclair/typebox": "^0.34.52",
     "@vitejs/plugin-react": "^5.0.0",

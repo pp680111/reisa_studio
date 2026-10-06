@@ -1,0 +1,22 @@
+{
+  "name": "@reisa/module-todo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "待办事项模块：本地待办、分类与进度记录（迁移自 todo_manage）",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./runtime": "./runtime/index.ts"
+  },
+  "dependencies": {
+    "@reisa/module-sdk": "workspace:*",
+    "@reisa/ui": "workspace:*",
+    "@sinclair/typebox": "^0.34.52",
+    "react": "^19.2.0",
+    "react-datepicker": "^8.4.0"
+  },
+  "devDependencies": {
+    "@reisa/module-host": "workspace:*",
+    "@types/react": "^19.0.0"
+  }
+}

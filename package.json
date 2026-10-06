@@ -12,7 +12,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "preview": "pnpm --filter @reisa/desktop preview",
     "start": "pnpm --filter @reisa/desktop start",
-    "test": "node --test tests/*.test.mjs packages/foundation/test/*.test.mjs packages/agent-adapter/test/*.test.mjs packages/module-host/test/*.test.mjs modules/knowledge/test/*.test.mjs modules/card-note/test/*.test.mjs apps/desktop/test/*.test.mjs",
+    "test": "node --test tests/*.test.mjs packages/foundation/test/*.test.mjs packages/agent-adapter/test/*.test.mjs packages/module-host/test/*.test.mjs modules/knowledge/test/*.test.mjs modules/card-note/test/*.test.mjs modules/todo/test/*.test.mjs apps/desktop/test/*.test.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "test:desktop": "node tests/electron-smoke.cjs",
     "format": "prettier --write \"{apps,modules,packages,scripts,tests}/**/*.{ts,tsx,mjs,cjs,css,json}\" package.json tsconfig.json tsconfig.base.json",
