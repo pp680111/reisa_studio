@@ -85,10 +85,6 @@ export function AppSidebar({
           <div className="brand-symbol">
             <img src={brandIcon} alt="" />
           </div>
-          <div className="brand-copy">
-            <strong>Reisa Studio</strong>
-            <small>你的 AI 工作空间</small>
-          </div>
         </div>
         <button className="new-conversation" title="新建会话" onClick={newConversation}>
           <Icon name="plus" size={19} />
