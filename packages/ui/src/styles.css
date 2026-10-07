@@ -244,16 +244,16 @@ small {
 .brand {
   display: flex;
   align-items: center;
-  gap: 11px;
-  height: 89px;
+  justify-content: center;
+  height: 160px;
   padding: 0 8px;
 }
 .brand-symbol {
   position: relative;
   display: grid;
   place-items: center;
-  width: 68px;
-  height: 72px;
+  width: 136px;
+  height: 144px;
   flex-shrink: 0;
   border: 1px solid var(--brand-border);
   border-radius: 20px;
@@ -417,6 +417,10 @@ kbd {
 .collapsed .brand-symbol {
   width: 32px;
   height: 34px;
+  border-radius: 10px;
+}
+.collapsed .brand-symbol img {
+  border-radius: 9px;
 }
 .collapsed .nav-label,
 .collapsed kbd,
@@ -2019,6 +2023,15 @@ blockquote {
   border-left: 2px solid var(--border);
   margin: 13px 0 13px 9px;
   padding: 3px 0 3px 18px;
+}
+.capability-row.is-live {
+  border-left-color: var(--success);
+}
+.capability-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 .capability-row code {
   color: var(--accent);

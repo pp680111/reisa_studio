@@ -8,6 +8,7 @@ import {
 } from '../conversation/ConversationView';
 import { getBridge, type ReisaCapability } from '../bridge';
 import { AppSidebar } from './AppSidebar';
+import { CapabilityDialog } from './CapabilityDialog';
 import { ModuleManager } from './ModuleManager';
 import { SettingsPage } from './SettingsPage';
 import { QuickSwitcher } from './QuickSwitcher';
@@ -439,91 +440,16 @@ export function AppShell() {
         recent={recent}
         navigate={navigate}
       />
-      <Dialog
+      <CapabilityDialog
         open={capabilityOpen}
         onClose={() => setCapabilityOpen(false)}
-        title={
-          capabilityModuleId
-            ? `${modules.find((module) => module.id === capabilityModuleId)?.name ?? ''} · 公开能力`
-            : '公开能力声明'
-        }
-        wide
-      >
-        <div className="capability-dialog">
-          <p className="muted">
-            {bridge
-              ? '只读接口声明 · 由已启用模块运行时注册'
-              : '只读接口声明 · 运行层尚未注册执行处理器'}
-          </p>
-          {modules
-            .filter((module) =>
-              capabilityModuleId ? module.id === capabilityModuleId : enabled.includes(module.id),
-            )
-            .map((module) => (
-              <section key={module.id}>
-                <h3>
-                  <Icon name={module.navigation?.icon ?? 'layers'} />
-                  {module.name}
-                  <Badge>{module.capabilities.length} 项</Badge>
-                  {!enabled.includes(module.id) && <Badge>已停用</Badge>}
-                </h3>
-                {module.capabilities.map((capability) => (
-                  <div className="capability-row" key={capability.id}>
-                    <code>{capability.name}</code>
-                    <p>{capability.description}</p>
-                  </div>
-                ))}
-              </section>
-            ))}
-          {bridge &&
-            liveCapabilities &&
-            (() => {
-              const selected = liveCapabilities.filter((capability) =>
-                capabilityModuleId
-                  ? capability.id.startsWith(`${capabilityModuleId}/`)
-                  : enabled.some((id) => capability.id.startsWith(`${id}/`)),
-              );
-              const groups = new Map<string, ReisaCapability[]>();
-              for (const capability of selected) {
-                const owner = capability.id.slice(0, capability.id.indexOf('/'));
-                const list = groups.get(owner) ?? [];
-                list.push(capability);
-                groups.set(owner, list);
-              }
-              return (
-                <>
-                  {selected.length === 0 && (
-                    <p className="muted">运行时尚未注册任何能力；普通文本会话仍可用。</p>
-                  )}
-                  {[...groups.entries()].map(([owner, capabilities]) => {
-                    const ownerModule = modules.find((module) => module.id === owner);
-                    return (
-                      <section key={owner}>
-                        <h3>
-                          <Icon name={ownerModule?.navigation?.icon ?? 'layers'} />
-                          {ownerModule?.name ?? owner}
-                          <Badge>运行时 · {capabilities.length} 项</Badge>
-                        </h3>
-                        {capabilities.map((capability) => (
-                          <div className="capability-row" key={capability.id}>
-                            <code>{capability.name}</code>
-                            <p>{capability.description}</p>
-                          </div>
-                        ))}
-                      </section>
-                    );
-                  })}
-                </>
-              );
-            })()}
-          {capabilityCount === 0 && !capabilityModuleId && (
-            <p>所有模块已停用，仍可使用普通文本会话界面。</p>
-          )}
-          <div className="info-box">
-            仅查看接口描述。不会读取模块文档、文件或私有设置，也不提供逐工具开关。
-          </div>
-        </div>
-      </Dialog>
+        moduleId={capabilityModuleId}
+        modules={modules}
+        enabled={enabled}
+        runtimeConnected={bridge !== undefined}
+        liveCapabilities={liveCapabilities}
+        capabilityCount={capabilityCount}
+      />
       {modules.map((module) => {
         const Settings = module.settings;
         return (
