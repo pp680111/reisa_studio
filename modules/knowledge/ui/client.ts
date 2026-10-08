@@ -115,6 +115,15 @@ export interface DocumentContentJson {
   contentTrusted: boolean;
 }
 
+/** test_connection 结果（永不抛错；失败以 ok:false + 面向用户的中文错误返回）。 */
+export interface EmbeddingConnectionTestJson {
+  ok: boolean;
+  model?: string;
+  dimensions?: number;
+  latencyMs?: number;
+  error?: string;
+}
+
 export const PAGE_ACTIONS = [
   'get_stats',
   'get_sync_status',
@@ -130,4 +139,15 @@ export const PAGE_ACTIONS = [
   'upload_file',
   'get_config',
   'update_config',
+  'test_connection',
 ] as const;
+
+/** 测试 embedding 连接：传入表单草稿，缺省字段回退已保存配置。 */
+export function testEmbeddingConnection(draft: {
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  dimensions?: number;
+}): Promise<EmbeddingConnectionTestJson> {
+  return callPage<EmbeddingConnectionTestJson>('test_connection', draft);
+}

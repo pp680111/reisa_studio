@@ -87,6 +87,38 @@
   pointer-events: none;
 }
 
+.knowledge-settings-test {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.knowledge-settings-test small {
+  flex: 1;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-settings-test small.knowledge-settings-test-ok {
+  color: var(--success);
+}
+
+.knowledge-settings-test small.knowledge-settings-test-failed {
+  color: #b66060;
+}
+
+.knowledge-settings-test .button {
+  flex-shrink: 0;
+}
+
 .knowledge-settings-footer {
   position: sticky;
   bottom: 0;

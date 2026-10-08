@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { Type } from '@sinclair/typebox';
 import { ModuleHost } from '@reisa/module-host';
 import { createKnowledgeRuntime, toDocumentInfo } from '../runtime/index.ts';
@@ -194,6 +195,90 @@ test('页面服务：来源管理与配置读写，未授权操作被拒', async
 
     await assert.rejects(() => service('unknown_action', {}), /未知的页面服务操作/);
   } finally {
+    await cleanup();
+  }
+});
+
+test('页面服务 test_connection：草稿实测 embedding 服务（成功 / 认证失败 / 维度不符 / 未配置）', async () => {
+  const { pageService, cleanup } = await makeHost();
+  let server;
+  try {
+    const service = pageService();
+
+    // 未配置任何 embedding 信息时直接提示，不发起请求
+    const missing = await service('test_connection', {});
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /请先填写/);
+
+    // 本地假 OpenAI 兼容 embeddings 服务：sk-good 正常返回 4 维向量，其余 401
+    let lastRequest = null;
+    server = createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk) => {
+        body += chunk;
+      });
+      request.on('end', () => {
+        lastRequest = {
+          url: request.url,
+          auth: request.headers.authorization,
+          body: JSON.parse(body),
+        };
+        response.setHeader('content-type', 'application/json');
+        if (request.headers.authorization !== 'Bearer sk-good') {
+          response.statusCode = 401;
+          response.end(JSON.stringify({ error: { message: 'invalid api key' } }));
+          return;
+        }
+        response.end(
+          JSON.stringify({
+            data: [{ index: 0, embedding: [1, 2, 3, 4] }],
+            usage: { prompt_tokens: 3 },
+          }),
+        );
+      });
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
+
+    // 成功：草稿配置直接生效（无需先保存），请求打到 /v1/embeddings 并携带测试文本
+    const ok = await service('test_connection', {
+      baseUrl,
+      apiKey: 'sk-good',
+      model: 'fake-embedding',
+      dimensions: 4,
+    });
+    assert.equal(ok.ok, true);
+    assert.equal(ok.model, 'fake-embedding');
+    assert.equal(ok.dimensions, 4);
+    assert.ok(typeof ok.latencyMs === 'number');
+    assert.equal(lastRequest.url, '/v1/embeddings');
+    assert.equal(lastRequest.auth, 'Bearer sk-good');
+    assert.equal(lastRequest.body.model, 'fake-embedding');
+    assert.deepEqual(lastRequest.body.input, ['连接测试']);
+
+    // 认证失败：401 → 分类后的可读提示
+    const denied = await service('test_connection', {
+      baseUrl,
+      apiKey: 'sk-bad',
+      model: 'fake-embedding',
+      dimensions: 4,
+    });
+    assert.equal(denied.ok, false);
+    assert.match(denied.error, /认证失败/);
+
+    // 维度不符：服务返回 4 维、配置 5 维 → invalid_response 可读提示（含具体维度）
+    const mismatched = await service('test_connection', {
+      baseUrl,
+      apiKey: 'sk-good',
+      model: 'fake-embedding',
+      dimensions: 5,
+    });
+    assert.equal(mismatched.ok, false);
+    assert.match(mismatched.error, /服务响应与配置不符/);
+    assert.match(mismatched.error, /dimension 4, expected 5/);
+  } finally {
+    server?.closeAllConnections();
+    await new Promise((resolve) => server?.close(resolve));
     await cleanup();
   }
 });

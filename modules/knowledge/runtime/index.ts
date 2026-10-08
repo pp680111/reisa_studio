@@ -385,9 +385,14 @@ export class KnowledgeRuntime implements RuntimeModule {
   // ---- 页面服务：管理面操作只属于页面，绝不注册为 Agent 能力（§5.3 安全分层） ----
 
   pageService(): PageServiceInvoke {
-    // 页面动作与工具调用、重新配置共享模块锁：动作期间服务不会被切换或关闭
-    return (action, input, context) =>
-      this.#mutex.run(async () => {
+    return (action, input, context) => {
+      // 连接测试不触碰任何运行服务（一次性客户端实测），不参与模块锁：
+      // 慢测试与慢检索互不阻塞，重配置切换也不影响进行中的测试
+      if (action === 'test_connection') {
+        return this.#testEmbeddingConnection(input, context?.signal);
+      }
+      // 其余页面动作与工具调用、重新配置共享模块锁：动作期间服务不会被切换或关闭
+      return this.#mutex.run(async () => {
         const signal = context?.signal;
         const { service, sync } = this.#require();
         const payload = (input ?? {}) as Record<string, unknown>;
@@ -508,6 +513,64 @@ export class KnowledgeRuntime implements RuntimeModule {
             throw new Error(`未知的页面服务操作：${action}`);
         }
       });
+    };
+  }
+
+  /**
+   * test_connection：按表单草稿（缺省回退已保存配置）现场构造一次性 embedding 客户端，
+   * 发送单条文本实测。返回值约定永不抛错——失败以 ok:false + 面向用户的中文错误返回
+   * （对齐 agent-adapter testModelConnection 的契约）。不重试：一次真实请求，失败立即反馈。
+   */
+  async #testEmbeddingConnection(input: JsonValue, signal?: AbortSignal): Promise<JsonValue> {
+    const moduleContext = this.#context;
+    if (moduleContext === undefined) {
+      return { ok: false, error: '知识库模块未激活' };
+    }
+    const payload = (input ?? {}) as Record<string, unknown>;
+    const saved = await loadSettings(moduleContext.config);
+    const pick = (key: 'baseUrl' | 'apiKey' | 'model'): string => {
+      const value = payload[key];
+      return typeof value === 'string' && value.trim() !== '' ? value : saved.embedding[key];
+    };
+    const rawDimensions = Number(payload['dimensions']);
+    const dimensions =
+      Number.isFinite(rawDimensions) && rawDimensions >= 1
+        ? Math.trunc(rawDimensions)
+        : saved.embedding.dimensions;
+
+    // 已保存配置整体打底，草稿字段非空则覆盖：允许在保存前测试当前表单内容
+    const target = {
+      ...saved.embedding,
+      baseUrl: pick('baseUrl'),
+      apiKey: pick('apiKey'),
+      model: pick('model'),
+      dimensions,
+    };
+    if (!embedderStatus(target).enabled) {
+      return { ok: false, error: '请先填写服务地址、模型名与 API Key' };
+    }
+
+    // 不重试：一次真实请求，失败立即反馈给设置页
+    const client = new OpenAICompatibleEmbeddingClient({
+      ...target,
+      maxRetries: 0,
+      rateLimitRetryDelaySeconds: 0,
+    });
+    const startedAt = Date.now();
+    try {
+      await client.embed(['连接测试'], signal);
+      return {
+        ok: true,
+        model: target.model,
+        dimensions: target.dimensions,
+        latencyMs: Date.now() - startedAt,
+      };
+    } catch (error) {
+      if (signal?.aborted) return { ok: false, error: '测试已取消' };
+      return { ok: false, error: describeEmbeddingTestFailure(error) };
+    } finally {
+      await client.aclose().catch(() => {});
+    }
   }
 }
 
@@ -559,6 +622,27 @@ export function createKnowledgeRuntime(options: CreateKnowledgeRuntimeOptions = 
     options.registerPageService(runtime.pageService());
   }
   return runtime;
+}
+
+/** test_connection 失败文案：EmbeddingError 分类 → 面向设置页的可操作中文提示。 */
+function describeEmbeddingTestFailure(error: unknown): string {
+  if (error instanceof EmbeddingError) {
+    switch (error.code) {
+      case 'authentication_failed':
+        return '认证失败：API Key 无效或没有访问权限';
+      case 'rate_limited':
+        return '服务返回 429 限流：服务可达，但请求频率超限';
+      case 'timeout':
+        return '请求超时：服务未在限定时间内响应';
+      case 'provider_unavailable':
+        return '服务不可用：服务端返回了 5xx 错误';
+      case 'invalid_response':
+        return `服务响应与配置不符：${error.message}`;
+      default:
+        return '请求失败：无法连接到服务地址，请检查 Base URL 与网络';
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 export type { SyncStatus, SearchMode };

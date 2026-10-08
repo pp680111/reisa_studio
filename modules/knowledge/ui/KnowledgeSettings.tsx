@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Badge, Button, Field, Icon } from '@reisa/ui';
 import type { ModuleSettingsProps } from '@reisa/module-sdk';
-import { callPage, pageBridgeAvailable } from './client.ts';
+import { callPage, pageBridgeAvailable, testEmbeddingConnection } from './client.ts';
+import type { EmbeddingConnectionTestJson } from './client.ts';
 import './KnowledgeSettings.css';
 
 /**
@@ -42,6 +43,8 @@ export function KnowledgeSettings({ notify, close }: ModuleSettingsProps) {
   const [saving, setSaving] = useState(false);
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [apiKeySet, setApiKeySet] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<EmbeddingConnectionTestJson | null>(null);
   const available = pageBridgeAvailable();
 
   useEffect(() => {
@@ -87,12 +90,32 @@ export function KnowledgeSettings({ notify, close }: ModuleSettingsProps) {
       setSettings(next);
       setApiKeySet((next.embedding?.apiKey ?? '').length > 0);
       setApiKeyDraft('');
+      setTestResult(null);
       notify('知识库配置已保存；若更换了 embedding 模型，索引会自动重建。');
       close?.();
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
+    }
+  };
+
+  // 用当前表单内容（含未保存草稿）实测 embedding 服务：成功校验维度、失败给出分类提示
+  const runConnectionTest = async (): Promise<void> => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testEmbeddingConnection({
+        baseUrl: settings.embedding.baseUrl,
+        apiKey: apiKeyDraft.trim() ? apiKeyDraft.trim() : settings.embedding.apiKey,
+        model: settings.embedding.model,
+        dimensions: settings.embedding.dimensions,
+      });
+      setTestResult(result);
+    } catch (error) {
+      setTestResult({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -157,6 +180,37 @@ export function KnowledgeSettings({ notify, close }: ModuleSettingsProps) {
                 onChange={(event) => updateEmbedding({ dimensions: Number(event.target.value) })}
               />
             </Field>
+          </div>
+          <div className="knowledge-settings-test">
+            <small
+              role="status"
+              className={
+                testResult === null
+                  ? ''
+                  : testResult.ok
+                    ? 'knowledge-settings-test-ok'
+                    : 'knowledge-settings-test-failed'
+              }
+            >
+              {testing
+                ? '正在向服务发送一条测试文本…'
+                : testResult === null
+                  ? '发送一条测试文本，验证服务地址、密钥与模型是否可用'
+                  : testResult.ok
+                    ? `连接正常：模型返回 ${testResult.dimensions ?? '?'} 维向量，耗时 ${(
+                        (testResult.latencyMs ?? 0) / 1000
+                      ).toFixed(1)} 秒`
+                    : `连接失败：${testResult.error ?? '未知错误'}`}
+            </small>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={testing || saving}
+              onClick={() => void runConnectionTest()}
+            >
+              <Icon name="sparkles" size={14} />
+              {testing ? '测试中…' : '测试连接'}
+            </Button>
           </div>
         </section>
 
@@ -230,7 +284,7 @@ export function KnowledgeSettings({ notify, close }: ModuleSettingsProps) {
           <Icon name="help" size={15} />
           更换服务、模型或向量维度后，索引会自动重建。
         </p>
-        <Button type="submit" variant="primary" disabled={saving}>
+        <Button type="submit" variant="primary" disabled={saving || testing}>
           {saving ? '保存中…' : '保存知识库配置'}
         </Button>
       </footer>
