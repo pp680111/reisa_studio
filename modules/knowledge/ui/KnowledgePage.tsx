@@ -360,7 +360,7 @@ export function KnowledgePage({ openSettings, notify }: ModulePageProps) {
                     className={'knowledge-source-item' + (selected ? ' active' : '')}
                     aria-pressed={selected}
                     onClick={() => selectSource(source.id)}
-                    title={source.path}
+                    title={`${source.name}\n${source.path}`}
                   >
                     <Icon name={source.type === 'local_file' ? 'document' : 'folder'} size={17} />
                     <span className="knowledge-source-copy">
@@ -385,7 +385,6 @@ export function KnowledgePage({ openSettings, notify }: ModulePageProps) {
                         )}
                       </span>
                     )}
-                    {selected && <Icon name="chevronRight" size={14} />}
                   </button>
                   {selected && (
                     <div className="knowledge-source-detail">

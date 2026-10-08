@@ -160,7 +160,8 @@
 }
 
 .knowledge-source-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -188,7 +189,6 @@
 }
 
 .knowledge-source-copy {
-  flex: 1;
   min-width: 0;
 }
 
@@ -203,8 +203,11 @@
 }
 
 .knowledge-source-copy strong {
+  overflow-wrap: anywhere;
+  white-space: normal;
   font-size: 13px;
   font-weight: 550;
+  line-height: 1.5;
 }
 
 .knowledge-source-copy small {
@@ -214,11 +217,14 @@
 }
 
 .knowledge-source-stats {
+  grid-column: 2;
+  min-width: 0;
   display: flex;
-  flex-shrink: 0;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 7px;
+  gap: 4px 10px;
   font-size: 11px;
+  line-height: 1.6;
   color: var(--faint);
   white-space: nowrap;
 }
