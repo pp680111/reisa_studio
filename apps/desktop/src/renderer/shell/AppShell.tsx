@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, Icon, IconButton } from '@reisa/ui';
 import { modules } from '../../composition/modules';
 import {
@@ -77,6 +77,13 @@ export function AppShell() {
       .reduce((sum, module) => sum + module.capabilities.length, 0);
   const conversation = conversations.find((item) => item.id === activeConversationId);
   const currentModule = modules.find((module) => module.id === route);
+  // 拉取模型连接并同步右上角模型显示名；基础配置保存成功后由 SettingsPage 回调复用
+  const refreshModelLabel = useCallback(() => {
+    if (!bridge) return;
+    void bridge.settings.getModelConnection().then((connection) => {
+      setModelLabel(connection?.modelId ?? '模型未配置');
+    });
+  }, [bridge]);
 
   // 桌面运行时：加载会话列表（空则创建首个会话）与全量能力描述
   useEffect(() => {
@@ -107,10 +114,9 @@ export function AppShell() {
       // 初始启用集合来自宿主状态（不再读 localStorage 副本）
       setRuntimeStates(toRuntimeStates(await bridge.conversation.listModules()));
       setModuleStatesLoaded(true);
-      const connection = await bridge.settings.getModelConnection();
-      setModelLabel(connection?.modelId ?? '模型未配置');
+      refreshModelLabel();
     })();
-  }, [bridge]);
+  }, [bridge, refreshModelLabel]);
   // 订阅宿主生命周期状态：activating/deactivating 过渡与 failed 原因实时可见
   useEffect(() => {
     if (!bridge) return;
@@ -408,6 +414,7 @@ export function AppShell() {
               notify={setNotice}
               bridge={bridge}
               modelLabel={modelLabel}
+              onConnectionSaved={refreshModelLabel}
             />
           </div>
           {modules.map((module) => {

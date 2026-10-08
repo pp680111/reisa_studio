@@ -13,6 +13,7 @@ export function SettingsPage({
   notify,
   bridge,
   modelLabel,
+  onConnectionSaved,
 }: {
   theme: Theme;
   setTheme: (theme: Theme) => void;
@@ -25,6 +26,8 @@ export function SettingsPage({
   bridge?: ReisaBridge;
   /** 主会话模型显示名（由宿主从基础配置读取）。 */
   modelLabel?: string;
+  /** 模型连接保存成功后的回调；宿主借此刷新右上角模型显示名。 */
+  onConnectionSaved?: () => void;
 }) {
   const [section, setSection] = useState('基础配置');
   const [prompt, setPrompt] = useState('');
@@ -66,6 +69,7 @@ export function SettingsPage({
       const loaded = await bridge.settings.getModelConnection();
       setConnection(loaded);
       setApiKey('');
+      onConnectionSaved?.();
       notify('模型连接已保存。');
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error));
