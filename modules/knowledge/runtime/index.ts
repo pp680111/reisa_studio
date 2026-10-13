@@ -601,6 +601,7 @@ function toDocumentJson(document: Document): JsonValue {
     size: document.size,
     mtimeNs: document.mtimeNs.toString(),
     indexedAt: document.indexedAt,
+    retryCount: document.retryCount,
   } as unknown as JsonValue;
 }
 

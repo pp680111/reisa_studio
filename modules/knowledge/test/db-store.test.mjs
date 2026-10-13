@@ -105,6 +105,7 @@ test('文档 upsert 与列表过滤', async () => {
     size: 1,
     mtimeNs: 1n,
     indexedAt: null,
+    retryCount: 0,
   };
   db.upsertDocument({ ...base, id: 'd1', relPath: 'a.md', name: 'a.md', status: 'indexed' });
   db.upsertDocument({ ...base, id: 'd2', relPath: 'b.md', name: 'b.md', status: 'error' });
@@ -114,6 +115,8 @@ test('文档 upsert 与列表过滤', async () => {
   assert.equal(db.listDocuments({ sourceId: source.id }).total, 2);
   db.upsertDocument({ ...base, id: 'd1', relPath: 'a.md', name: 'a.md', status: 'error' });
   assert.equal(db.getDocument('d1')?.status, 'error', 'upsert 按 id 覆盖');
+  db.upsertDocument({ ...base, id: 'd2', relPath: 'b.md', name: 'b.md', status: 'error', retryCount: 3 });
+  assert.equal(db.getDocument('d2')?.retryCount, 3, 'retry_count 随 upsert 写入并回读');
 });
 
 test('stats 汇总', async () => {
@@ -140,6 +143,7 @@ test('sourceDocumentStats 按来源聚合各状态文档数（含零文档来源
     size: 1,
     mtimeNs: 1n,
     indexedAt: null,
+    retryCount: 0,
   };
   const doc = (id, sourceId, status) =>
     db.upsertDocument({ ...base, id, sourceId, relPath: `${id}.md`, name: `${id}.md`, status });

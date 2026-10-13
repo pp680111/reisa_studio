@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS documents (
     size INTEGER NOT NULL DEFAULT 0,
     mtime_ns INTEGER NOT NULL DEFAULT 0,
     indexed_at TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
     UNIQUE(source_id, rel_path)
 );
 CREATE TABLE IF NOT EXISTS meta (
@@ -62,6 +63,8 @@ export interface Document {
   readonly size: number;
   readonly mtimeNs: bigint;
   readonly indexedAt: string | null;
+  /** 同一文件版本连续自动索引失败次数；成功、文件变化或手动提交后清零。 */
+  readonly retryCount: number;
 }
 
 export interface LibraryStats {
@@ -91,6 +94,7 @@ export interface DocumentInput {
   readonly size: number;
   readonly mtimeNs: bigint;
   readonly indexedAt: string | null;
+  readonly retryCount: number;
 }
 
 export function utcNow(): string {
@@ -133,6 +137,7 @@ interface DocumentRow {
   size: number;
   mtime_ns: number | bigint;
   indexed_at: string | null;
+  retry_count: number | bigint;
 }
 
 function sourceFromRow(row: SourceRow): Source {
@@ -159,6 +164,7 @@ function documentFromRow(row: DocumentRow): Document {
     size: Number(row.size),
     mtimeNs: BigInt(row.mtime_ns),
     indexedAt: row.indexed_at,
+    retryCount: Number(row.retry_count),
   };
 }
 
@@ -202,6 +208,13 @@ export class MetadataDB {
     const columns = this.#db.prepare('PRAGMA table_info(sources)').all() as { name: string }[];
     if (!columns.some((column) => column.name === 'ignore_rules')) {
       this.#db.exec("ALTER TABLE sources ADD COLUMN ignore_rules TEXT NOT NULL DEFAULT ''");
+    }
+    // 老库迁移：既有 documents 表没有 retry_count 列（错误重试上限）
+    const documentColumns = this.#db.prepare('PRAGMA table_info(documents)').all() as {
+      name: string;
+    }[];
+    if (!documentColumns.some((column) => column.name === 'retry_count')) {
+      this.#db.exec('ALTER TABLE documents ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0');
     }
   }
 
@@ -267,8 +280,8 @@ export class MetadataDB {
       .prepare(
         `INSERT INTO documents (
             id, source_id, rel_path, name, content_hash, status, error,
-            chunk_count, size, mtime_ns, indexed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            chunk_count, size, mtime_ns, indexed_at, retry_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             content_hash = excluded.content_hash,
@@ -277,7 +290,8 @@ export class MetadataDB {
             chunk_count = excluded.chunk_count,
             size = excluded.size,
             mtime_ns = excluded.mtime_ns,
-            indexed_at = excluded.indexed_at`,
+            indexed_at = excluded.indexed_at,
+            retry_count = excluded.retry_count`,
       )
       .run(
         document.id,
@@ -291,6 +305,7 @@ export class MetadataDB {
         document.size,
         document.mtimeNs,
         document.indexedAt,
+        document.retryCount,
       );
   }
 

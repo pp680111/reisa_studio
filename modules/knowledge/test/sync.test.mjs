@@ -30,6 +30,7 @@ async function makeStack(options = {}) {
     intervalSeconds: 30,
     debounceSeconds: 0,
     autoIndexMaxBytes: options.autoIndexMaxBytes ?? 5 * 1024 * 1024,
+    ...(options.maxIndexRetries !== undefined ? { maxIndexRetries: options.maxIndexRetries } : {}),
   });
   const service = new KnowledgeBase({
     uploadsPath: uploadsPathFor(dataDir),
@@ -199,6 +200,87 @@ test('未配置 embedding → 全部文档 error，全文检索仍可用', async
     () => stack.service.search({ query: 'x', mode: 'vector' }),
     (error) => error instanceof ServiceError && error.code === 'embedding_unavailable',
   );
+  await stack.cleanup();
+  await rm(docs, { recursive: true, force: true });
+});
+
+test('error 文档连续失败达上限后暂停自动重试；文件变化或手动提交后重新计数', async () => {
+  let embedCalls = 0;
+  const failing = {
+    embed: async () => {
+      embedCalls += 1;
+      throw Object.assign(new Error('embedding service down'), { status: 503 });
+    },
+  };
+  const stack = await makeStack({ embedder: failing, maxIndexRetries: 2 });
+  const docs = await mkdtemp(join(tmpdir(), 'kb-docs-'));
+  const path = await writeDoc(docs, 'flaky.md', 'flaky content v1');
+  await stack.service.addSource({ path: docs });
+
+  // 前两轮失败：计入失败次数，达到上限时文案注明暂停
+  await stack.sync.reconcileAll();
+  let document = stack.service.listDocuments().items[0];
+  assert.equal(document?.status, 'error');
+  assert.equal(document?.retryCount, 1);
+  await stack.sync.reconcileAll();
+  document = stack.service.listDocuments().items[0];
+  assert.equal(document?.retryCount, 2);
+  assert.match(document?.error ?? '', /暂停自动重试/);
+
+  // 达上限后对账不再调用 embedding，文档保持 error
+  const callsAtCap = embedCalls;
+  assert.equal(callsAtCap, 2);
+  await stack.sync.reconcileAll();
+  await stack.sync.reconcileAll();
+  assert.equal(embedCalls, callsAtCap, '达上限后不再自动重试');
+  document = stack.service.listDocuments().items[0];
+  assert.equal(document?.status, 'error');
+  assert.equal(document?.retryCount, 2);
+
+  // 文件内容变化 → 重新计数
+  await writeDoc(docs, 'flaky.md', 'flaky content v2');
+  await stack.sync.reconcileAll();
+  document = stack.service.listDocuments().items[0];
+  assert.equal(document?.status, 'error');
+  assert.equal(document?.retryCount, 1, '文件变化后重新计数');
+  assert.equal(embedCalls, callsAtCap + 1);
+
+  // 手动提交 → 视为全新尝试
+  const submitted = await stack.service.submitForIndex(document?.id ?? '');
+  assert.equal(submitted.status, 'error');
+  assert.equal(submitted.retryCount, 1, '手动提交后重新计数');
+  await stack.cleanup();
+  await rm(docs, { recursive: true, force: true });
+});
+
+test('error 文档在服务恢复后自动重试成功，重试计数清零', async () => {
+  let embedCalls = 0;
+  const flaky = {
+    embed: async (texts) => {
+      embedCalls += 1;
+      if (embedCalls === 1) {
+        throw Object.assign(new Error('embedding service down'), { status: 503 });
+      }
+      return {
+        vectors: texts.map((text) => fakeVector(text, DIM)),
+        promptTokens: null,
+      };
+    },
+  };
+  const stack = await makeStack({ embedder: flaky });
+  const docs = await mkdtemp(join(tmpdir(), 'kb-docs-'));
+  await writeDoc(docs, 'recovers.md', 'content that eventually indexes');
+  await stack.service.addSource({ path: docs });
+
+  await stack.sync.reconcileAll();
+  let document = stack.service.listDocuments().items[0];
+  assert.equal(document?.status, 'error');
+  assert.equal(document?.retryCount, 1);
+
+  await stack.sync.reconcileAll();
+  document = stack.service.listDocuments().items[0];
+  assert.equal(document?.status, 'indexed', '下一轮自动重试成功');
+  assert.equal(document?.retryCount, 0, '成功后计数清零');
   await stack.cleanup();
   await rm(docs, { recursive: true, force: true });
 });

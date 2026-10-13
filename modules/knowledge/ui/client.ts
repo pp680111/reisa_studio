@@ -63,6 +63,8 @@ export interface DocumentJson {
   size: number;
   mtimeNs: string;
   indexedAt: string | null;
+  /** 同一文件版本连续自动索引失败次数；达上限后暂停自动重试。 */
+  retryCount: number;
 }
 
 export interface SyncStatusJson {

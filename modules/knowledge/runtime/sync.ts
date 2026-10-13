@@ -21,9 +21,16 @@ import { ChangeWatcher } from './watcher.ts';
  * 后台对账/索引循环（迁移自 skb sync.py）。
  * 语义基准（迁移设计文档 §4.1）：watcher 唤醒 + 周期全量对账兜底、防抖合并、
  * 增量判断 size+mtime_ns、内容哈希不变保留旧向量、manual_required、单飞行锁。
+ * 本地增强：同一文件版本连续自动索引失败达上限后暂停重试，不无限循环。
  */
 
 export const MANUAL_REQUIRED = 'manual_required';
+
+/**
+ * 同一文件版本连续自动索引失败的重试上限：失败计数达到上限后，对账不再自动重试
+ * （状态保持 error 并在 error 文案注明）；文件变化或手动提交会重新计数。
+ */
+export const DEFAULT_MAX_INDEX_RETRIES = 3;
 
 export class DocumentExcludedError extends Error {
   readonly relPath: string;
@@ -61,6 +68,8 @@ export interface SyncServiceOptions {
   readonly intervalSeconds: number;
   readonly debounceSeconds: number;
   readonly autoIndexMaxBytes?: number;
+  /** 同一文件版本连续失败的重试上限；缺省 DEFAULT_MAX_INDEX_RETRIES。 */
+  readonly maxIndexRetries?: number;
   readonly maxTokens?: number;
   readonly overlapTokens?: number;
   readonly logger?: ModuleLogger;
@@ -73,6 +82,7 @@ export class SyncService {
   readonly #intervalSeconds: number;
   readonly #debounceSeconds: number;
   readonly #autoIndexMaxBytes: number;
+  readonly #maxIndexRetries: number;
   readonly #chunker: RecursiveChunker;
   readonly #logger: ModuleLogger | undefined;
   readonly #mutex = new AsyncMutex();
@@ -92,6 +102,7 @@ export class SyncService {
     this.#intervalSeconds = options.intervalSeconds;
     this.#debounceSeconds = options.debounceSeconds;
     this.#autoIndexMaxBytes = options.autoIndexMaxBytes ?? 5 * 1024 * 1024;
+    this.#maxIndexRetries = Math.max(1, options.maxIndexRetries ?? DEFAULT_MAX_INDEX_RETRIES);
     this.#chunker = new RecursiveChunker({
       maxTokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
       overlapTokens: options.overlapTokens ?? DEFAULT_OVERLAP_TOKENS,
@@ -194,6 +205,14 @@ export class SyncService {
           // 仍然超限且未变化：继续等待手动提交，不每轮重复写状态
           continue;
         }
+        if (
+          unchanged &&
+          knownDocument.status === 'error' &&
+          knownDocument.retryCount >= this.#maxIndexRetries
+        ) {
+          // 连续失败达上限且未变化：暂停自动重试（文件变化或手动提交后重新计数）
+          continue;
+        }
       }
       await this.#indexFile(source, probed.scanRoot, snapshot);
     }
@@ -247,6 +266,14 @@ export class SyncService {
     const path = join(root, snapshot.relPath);
     const documentId = documentIdentity(source.id, snapshot.relPath);
     const indexedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    // 失败计数只在同一文件版本内累计：文件变化或手动提交（force）视为全新尝试
+    const existing = this.#database.getDocument(documentId);
+    const sameVersion =
+      existing !== undefined &&
+      existing.size === snapshot.size &&
+      existing.mtimeNs === snapshot.mtimeNs;
+    const previousAttempts =
+      existing !== undefined && sameVersion && options.force !== true ? existing.retryCount : 0;
     let base: DocumentInput = {
       id: documentId,
       sourceId: source.id,
@@ -259,10 +286,20 @@ export class SyncService {
       size: snapshot.size,
       mtimeNs: snapshot.mtimeNs,
       indexedAt: null,
+      retryCount: previousAttempts,
     };
 
+    const attempts = previousAttempts + 1;
     const recordFailure = (message: string): void => {
-      this.#database.upsertDocument({ ...base, status: 'error', error: message });
+      this.#database.upsertDocument({
+        ...base,
+        status: 'error',
+        error:
+          attempts >= this.#maxIndexRetries
+            ? `${message}（自动索引已连续失败 ${attempts} 次，暂停自动重试；文件变更或手动重新索引后会再试）`
+            : message,
+        retryCount: attempts,
+      });
     };
 
     if (this.#embedder === null) {
@@ -282,7 +319,6 @@ export class SyncService {
       return;
     }
     base = { ...base, contentHash: parsed.contentHash, name: displayName ?? parsed.displayName };
-    const existing = this.#database.getDocument(documentId);
     if (
       existing !== undefined &&
       existing.status === 'indexed' &&
@@ -295,12 +331,19 @@ export class SyncService {
         error: null,
         chunkCount: existing.chunkCount,
         indexedAt: existing.indexedAt,
+        retryCount: 0,
       });
       return;
     }
     const chunks = this.#chunker.chunk(parsed, documentId);
     if (chunks.length === 0) {
-      this.#database.upsertDocument({ ...base, status: 'indexed', error: null, indexedAt });
+      this.#database.upsertDocument({
+        ...base,
+        status: 'indexed',
+        error: null,
+        indexedAt,
+        retryCount: 0,
+      });
       return;
     }
     let vectors: number[][];
@@ -335,6 +378,7 @@ export class SyncService {
       error: null,
       chunkCount: records.length,
       indexedAt,
+      retryCount: 0,
     });
   }
 
@@ -374,6 +418,7 @@ export class SyncService {
         '-byte auto-index limit; submit it for indexing manually',
       chunkCount: 0,
       indexedAt: null,
+      retryCount: 0,
     });
   }
 
