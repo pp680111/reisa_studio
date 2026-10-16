@@ -115,6 +115,12 @@ export function ConversationView({
     outputTokens?: number;
   } | null>(null);
   const runningRef = useRef(false);
+  const lastEntry = entries[entries.length - 1];
+  // 等待阶段（首字未到、或工具完成后模型再生成）显示占位；流式文本与执行中的工具卡片本身即是进度，不重复提示
+  const thinking =
+    running &&
+    !(lastEntry?.kind === 'text' && lastEntry.role === 'assistant') &&
+    !(lastEntry?.kind === 'tool' && lastEntry.status === 'running');
 
   const load = useCallback(async () => {
     if (!bridge) return;
@@ -140,7 +146,7 @@ export function ConversationView({
 
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ block: 'end' });
-  }, [conversation.messages.length, entries.length]);
+  }, [conversation.messages.length, entries.length, thinking]);
 
   const submit = () => {
     const text = conversation.draft.trim();
@@ -347,6 +353,24 @@ export function ConversationView({
                     />
                   ),
                 )}
+              {bridge && thinking && (
+                <div
+                  className="assistant-message"
+                  role="status"
+                  aria-live="polite"
+                  aria-label="模型正在思考"
+                >
+                  <div className="assistant-heading">
+                    <span className="assistant-avatar">R</span>
+                    <strong>Reisa</strong>
+                  </div>
+                  <div className="thinking-dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                </div>
+              )}
               {lastUsage && !running && (
                 <div className="usage-line" title="服务商上报的本次运行整体用量，仅用于展示">
                   本轮用量 · 输入 {lastUsage.inputTokens ?? '—'} tokens · 输出{' '}
