@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PublicResult } from '@reisa/module-sdk';
@@ -10,13 +10,12 @@ import type { ReisaAttachmentInput, ReisaBridge, ReisaEvent } from '../bridge';
 export interface Conversation {
   id: string;
   title: string;
-  draft: string;
   messages: { id: string; text: string; role: 'user' | 'notice' }[];
   attachments: { id: string; name: string; file?: File }[];
   sample?: boolean;
 }
 export function createConversation(): Conversation {
-  return { id: crypto.randomUUID(), title: '新建会话', draft: '', messages: [], attachments: [] };
+  return { id: crypto.randomUUID(), title: '新建会话', messages: [], attachments: [] };
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -84,6 +83,28 @@ function summarizeOutput(output: unknown): string {
   }
 }
 
+/** remark 插件数组提升到模块级，避免每次渲染生成新引用。 */
+const remarkGfmPlugins = [remarkGfm];
+
+/**
+ * 单条助手回复独立 memo：text 未变时跳过重渲染。
+ * react-markdown 每次渲染都会对全文重新走一遍 remark 解析管线，
+ * 不 memo 的话输入框打字（本组件自身状态更新）会连带重新解析全部历史消息。
+ */
+const AssistantMessage = memo(function AssistantMessage({ text }: { text: string }) {
+  return (
+    <div className="assistant-message">
+      <div className="assistant-heading">
+        <span className="assistant-avatar">R</span>
+        <strong>Reisa</strong>
+      </div>
+      <div className="assistant-body markdown">
+        <ReactMarkdown remarkPlugins={remarkGfmPlugins}>{text}</ReactMarkdown>
+      </div>
+    </div>
+  );
+});
+
 export function ConversationView({
   conversation,
   update,
@@ -108,6 +129,9 @@ export function ConversationView({
   const messagesEnd = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [results, setResults] = useState(false);
+  // 输入草稿留在组件内部：会话实例常驻挂载（切换会话仅隐藏），草稿不丢失；
+  // 放在 AppShell 顶层会导致每个按键重渲染整个应用树。
+  const [draft, setDraft] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
   const [running, setRunning] = useState(false);
   const [lastUsage, setLastUsage] = useState<{
@@ -149,14 +173,13 @@ export function ConversationView({
   }, [conversation.messages.length, entries.length, thinking]);
 
   const submit = () => {
-    const text = conversation.draft.trim();
+    const text = draft.trim();
     if (!text && !conversation.attachments.length) return;
     if (!bridge) {
       update({
         ...conversation,
         title:
           conversation.messages.length === 0 ? text.slice(0, 20) || '附件会话' : conversation.title,
-        draft: '',
         attachments: [],
         messages: [
           ...conversation.messages,
@@ -176,6 +199,7 @@ export function ConversationView({
           },
         ],
       });
+      setDraft('');
       return;
     }
     void submitReal(text);
@@ -191,9 +215,9 @@ export function ConversationView({
     update({
       ...conversation,
       title: isFirst ? text.slice(0, 20) || '新会话' : conversation.title,
-      draft: '',
       attachments: [],
     });
+    setDraft('');
     setEntries((previous) => [
       ...previous,
       {
@@ -329,15 +353,7 @@ export function ConversationView({
                         {entry.text}
                       </div>
                     ) : (
-                      <div className="assistant-message" key={`assistant-${index}`}>
-                        <div className="assistant-heading">
-                          <span className="assistant-avatar">R</span>
-                          <strong>Reisa</strong>
-                        </div>
-                        <div className="assistant-body markdown">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text}</ReactMarkdown>
-                        </div>
-                      </div>
+                      <AssistantMessage key={`assistant-${index}`} text={entry.text} />
                     )
                   ) : (
                     <ToolCallRecord
@@ -408,8 +424,8 @@ export function ConversationView({
               rows={3}
               aria-label="会话消息"
               placeholder="写下你的想法，让我们从这里开始…"
-              value={conversation.draft}
-              onChange={(e) => update({ ...conversation, draft: e.target.value })}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (
                   e.key === 'Enter' &&
@@ -448,7 +464,7 @@ export function ConversationView({
                   className="send-button"
                   aria-label="发送消息"
                   title="发送消息"
-                  disabled={!conversation.draft.trim() && !conversation.attachments.length}
+                  disabled={!draft.trim() && !conversation.attachments.length}
                   onClick={submit}
                 >
                   <Icon name="arrowUp" size={19} />

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Icon } from '@reisa/ui';
 
 export type ToolStatus =
@@ -19,7 +20,8 @@ export interface ToolCallRecordProps {
   error?: string;
   sample?: boolean;
 }
-export function ToolCallRecord({
+// memo：props 均为原始值或来自 entries 状态的稳定引用，输入框打字等无关更新时跳过重渲染
+export const ToolCallRecord = memo(function ToolCallRecord({
   action,
   name,
   status,
@@ -50,4 +52,4 @@ export function ToolCallRecord({
       </div>
     </details>
   );
-}
+});

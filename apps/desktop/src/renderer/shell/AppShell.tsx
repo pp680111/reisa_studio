@@ -30,7 +30,6 @@ const MODULE_IDS = modules.map((module) => module.id);
 const sampleConversation: Conversation = {
   id: 'sample-brand',
   title: '品牌灵感与创作',
-  draft: '',
   messages: [],
   attachments: [],
   sample: true,
@@ -97,7 +96,6 @@ export function AppShell() {
           list.map((item) => ({
             id: item.id,
             title: item.title,
-            draft: '',
             messages: [],
             attachments: [],
           })),
@@ -106,7 +104,7 @@ export function AppShell() {
       } else {
         const created = await bridge.conversation.createConversation();
         setConversations([
-          { id: created.id, title: created.title, draft: '', messages: [], attachments: [] },
+          { id: created.id, title: created.title, messages: [], attachments: [] },
         ]);
         setActiveConversationId(created.id);
       }
@@ -148,7 +146,6 @@ export function AppShell() {
         const next: Conversation = {
           id: created.id,
           title: created.title,
-          draft: '',
           messages: [],
           attachments: [],
         };
@@ -286,7 +283,6 @@ export function AppShell() {
             .map((item) => ({
               id: item.id,
               title: item.title,
-              draft: '',
               messages: [],
               attachments: [],
             })),
