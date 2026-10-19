@@ -111,6 +111,7 @@ export function TodoDetailDialog({
       }}
       title={isEdit ? '待办详情' : '新建待办'}
       wide
+      className="todo-detail-dialog"
     >
       <div className="todo-dialog-body">
         {loading ? (
@@ -123,106 +124,110 @@ export function TodoDetailDialog({
             onSubmit={(event) => void handleSubmit(event)}
             aria-busy={saving}
           >
-            <Field label="标题">
-              <input
-                value={title}
-                placeholder="要做什么？"
-                autoFocus
-                required
-                disabled={saving}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </Field>
-            <Field label="详情（可选）">
-              <textarea
-                value={detail}
-                rows={3}
-                placeholder="补充说明、链接或备注…"
-                disabled={saving}
-                onChange={(event) => setDetail(event.target.value)}
-              />
-            </Field>
-            <div className="todo-form-grid">
-              {isEdit && (
-                <Field label="状态">
-                  <select
-                    disabled={saving}
-                    value={status}
-                    onChange={(event) => setStatus(Number(event.target.value) as TodoStatus)}
-                  >
-                    {TODO_STATES.map((state) => (
-                      <option key={state.key} value={state.key}>
-                        {state.text}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              )}
-              <Field label="分类">
-                <button
-                  type="button"
-                  className="todo-category-input"
+            <div className="todo-form-scroll">
+              <Field label="标题">
+                <input
+                  value={title}
+                  placeholder="要做什么？"
+                  autoFocus
+                  required
                   disabled={saving}
-                  onClick={() => setSelectingCategory(true)}
-                  title="点击选择分类"
-                >
-                  <span>
-                    <Icon name="folder" size={16} />
-                    {category?.name ?? '未分类'}
-                  </span>
-                  <Icon name="chevronDown" size={14} />
-                </button>
-              </Field>
-              <Field label="截止时间">
-                <DatePicker
-                  id="todo-deadline"
-                  disabled={saving}
-                  selected={deadline}
-                  onChange={(date) => setDeadline(date)}
-                  showTimeSelect
-                  timeFormat="HH:mm"
-                  timeCaption="时间"
-                  formatWeekDay={(day) => WEEKDAY_LABELS[day] ?? day}
-                  clearButtonTitle="清除截止时间"
-                  renderCustomHeader={({
-                    date,
-                    decreaseMonth,
-                    increaseMonth,
-                    prevMonthButtonDisabled,
-                    nextMonthButtonDisabled,
-                  }) => (
-                    <div className="todo-calendar-heading">
-                      <button
-                        type="button"
-                        aria-label="上一月"
-                        disabled={prevMonthButtonDisabled}
-                        onClick={decreaseMonth}
-                      >
-                        <Icon name="chevronRight" size={16} className="todo-calendar-previous" />
-                      </button>
-                      <span>
-                        {date.getFullYear()} 年 {date.getMonth() + 1} 月
-                      </span>
-                      <button
-                        type="button"
-                        aria-label="下一月"
-                        disabled={nextMonthButtonDisabled}
-                        onClick={increaseMonth}
-                      >
-                        <Icon name="chevronRight" size={16} />
-                      </button>
-                    </div>
-                  )}
-                  dateFormat="yyyy-MM-dd HH:mm"
-                  placeholderText="不设置"
-                  isClearable
+                  onChange={(event) => setTitle(event.target.value)}
                 />
               </Field>
+              <Field label="详情（可选）">
+                <textarea
+                  value={detail}
+                  rows={3}
+                  placeholder="补充说明、链接或备注…"
+                  disabled={saving}
+                  onChange={(event) => setDetail(event.target.value)}
+                />
+              </Field>
+              <div className="todo-form-grid">
+                {isEdit && (
+                  <Field label="状态">
+                    <select
+                      disabled={saving}
+                      value={status}
+                      onChange={(event) => setStatus(Number(event.target.value) as TodoStatus)}
+                    >
+                      {TODO_STATES.map((state) => (
+                        <option key={state.key} value={state.key}>
+                          {state.text}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field label="分类">
+                  <button
+                    type="button"
+                    className="todo-category-input"
+                    disabled={saving}
+                    onClick={() => setSelectingCategory(true)}
+                    title="点击选择分类"
+                  >
+                    <span>
+                      <Icon name="folder" size={16} />
+                      {category?.name ?? '未分类'}
+                    </span>
+                    <Icon name="chevronDown" size={14} />
+                  </button>
+                </Field>
+                <Field label="截止时间">
+                  <DatePicker
+                    id="todo-deadline"
+                    disabled={saving}
+                    selected={deadline}
+                    onChange={(date) => setDeadline(date)}
+                    showTimeSelect
+                    timeFormat="HH:mm"
+                    timeCaption="时间"
+                    formatWeekDay={(day) => WEEKDAY_LABELS[day] ?? day}
+                    clearButtonTitle="清除截止时间"
+                    // 详情弹窗内容区独立滚动：固定定位的浮层不会被内容区裁剪。
+                    popperProps={{ strategy: 'fixed' }}
+                    renderCustomHeader={({
+                      date,
+                      decreaseMonth,
+                      increaseMonth,
+                      prevMonthButtonDisabled,
+                      nextMonthButtonDisabled,
+                    }) => (
+                      <div className="todo-calendar-heading">
+                        <button
+                          type="button"
+                          aria-label="上一月"
+                          disabled={prevMonthButtonDisabled}
+                          onClick={decreaseMonth}
+                        >
+                          <Icon name="chevronRight" size={16} className="todo-calendar-previous" />
+                        </button>
+                        <span>
+                          {date.getFullYear()} 年 {date.getMonth() + 1} 月
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="下一月"
+                          disabled={nextMonthButtonDisabled}
+                          onClick={increaseMonth}
+                        >
+                          <Icon name="chevronRight" size={16} />
+                        </button>
+                      </div>
+                    )}
+                    dateFormat="yyyy-MM-dd HH:mm"
+                    placeholderText="不设置"
+                    isClearable
+                  />
+                </Field>
+              </div>
+              {isEdit && createTime !== null && (
+                <p className="todo-created-at">创建于 {formatDateTime(createTime)}</p>
+              )}
+              {isEdit && todoId !== null && <ProgressSection todoId={todoId} notify={notify} />}
             </div>
-            {isEdit && createTime !== null && (
-              <p className="todo-created-at">创建于 {formatDateTime(createTime)}</p>
-            )}
-            {isEdit && todoId !== null && <ProgressSection todoId={todoId} notify={notify} />}
             <div className="todo-dialog-actions">
               <Button variant="ghost" disabled={saving} onClick={() => onFinished(false)}>
                 取消

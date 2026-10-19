@@ -244,6 +244,7 @@ export function Dialog({
   children,
   wide = false,
   feedback,
+  className = '',
 }: {
   open: boolean;
   onClose: () => void;
@@ -251,6 +252,8 @@ export function Dialog({
   children: ReactNode;
   wide?: boolean;
   feedback?: string;
+  /** 额外的外观类：用于个别弹层的布局变体，不改变默认对话框行为。 */
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -262,7 +265,7 @@ export function Dialog({
   return (
     <dialog
       ref={ref}
-      className={`dialog ${wide ? 'wide' : ''}`}
+      className={`dialog ${wide ? 'wide' : ''} ${className}`.trim()}
       onCancel={onClose}
       onClose={() => {
         if (open) onClose();

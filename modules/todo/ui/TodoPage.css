@@ -416,13 +416,49 @@
 .todo-list-panel .empty-state p {
   margin-bottom: 18px;
 }
-/* 对话框：标题与备注优先，属性集中排列，底部操作固定可见。 */
+/* 对话框：标题与底部操作固定，内容区独立滚动。 */
 .todo-dialog-body {
   display: flex;
   flex-direction: column;
   gap: 18px;
   padding: 20px 24px 24px;
   min-width: 0;
+}
+/* 待办详情：只有中间内容滚动，滚动条收在内容区内，不覆盖标题与底部操作。 */
+.todo-detail-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.todo-detail-dialog .dialog-header {
+  position: static;
+  flex: 0 0 auto;
+}
+.todo-detail-dialog .todo-dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.todo-detail-dialog .todo-form {
+  flex: 1;
+  min-height: 0;
+}
+.todo-detail-dialog .todo-form-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  /* 留出焦点外描边与滚动条的空间，避免被滚动容器裁掉。 */
+  padding: 10px 14px;
+  margin: -10px -14px;
+}
+.todo-detail-dialog .todo-dialog-actions {
+  flex: 0 0 auto;
+  position: static;
 }
 .todo-dialog-body .field,
 .todo-form .field,
@@ -573,14 +609,6 @@
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
-.todo-form > .todo-dialog-actions {
-  position: sticky;
-  bottom: -24px;
-  background: var(--surface);
-  padding-bottom: 16px;
-  margin-bottom: -16px;
-  z-index: 2;
-}
 .todo-select-search {
   max-width: none;
 }
@@ -654,8 +682,6 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  max-height: 220px;
-  overflow-y: auto;
 }
 .todo-progress-item {
   display: flex;
@@ -770,8 +796,9 @@
   .todo-prompt-form {
     padding: 16px;
   }
-  .todo-form > .todo-dialog-actions {
-    bottom: -16px;
+  .todo-detail-dialog .todo-form-scroll {
+    padding: 8px 10px;
+    margin: -8px -10px;
   }
   .todo-list-heading {
     padding: 10px 14px;
