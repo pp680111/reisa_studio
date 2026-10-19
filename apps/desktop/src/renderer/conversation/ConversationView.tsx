@@ -12,6 +12,8 @@ export interface Conversation {
   title: string;
   messages: { id: string; text: string; role: 'user' | 'notice' }[];
   attachments: { id: string; name: string; file?: File }[];
+  /** 会话绑定角色；无角色 = 默认助手。创建时固定，不可切换（仅展示）。 */
+  roleId?: string;
   sample?: boolean;
 }
 export function createConversation(): Conversation {

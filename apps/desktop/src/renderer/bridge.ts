@@ -9,6 +9,37 @@ export interface ReisaConversationSummary {
   title: string;
   createdAt: number;
   updatedAt: number;
+  /** 会话绑定角色；无角色 = 默认助手（使用全局默认提示词）。创建时固定，不可切换。 */
+  roleId?: string;
+}
+
+/** 角色定义：一套可配置的会话 system prompt 方案（角色数据归主应用）。 */
+export interface ReisaRole {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  includeBasePrompt: boolean;
+  builtin: boolean;
+  disabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ReisaRoleInput {
+  name: string;
+  description?: string;
+  prompt: string;
+  includeBasePrompt?: boolean;
+}
+
+export interface ReisaRoleUpdate {
+  id: string;
+  name?: string;
+  description?: string;
+  prompt?: string;
+  includeBasePrompt?: boolean;
+  disabled?: boolean;
 }
 
 export interface ReisaMessagePart {
@@ -90,7 +121,7 @@ export interface ReisaBridge {
       limit?: number;
       offset?: number;
     }): Promise<ReisaConversationSummary[]>;
-    createConversation(title?: string): Promise<ReisaConversationSummary>;
+    createConversation(title?: string, roleId?: string): Promise<ReisaConversationSummary>;
     renameConversation(conversationId: string, title: string): Promise<boolean>;
     deleteConversation(conversationId: string): Promise<boolean>;
     getMessages(conversationId: string): Promise<ReisaMessage[]>;
@@ -123,6 +154,12 @@ export interface ReisaBridge {
     testConnection(): Promise<ReisaConnectionTest>;
     getPrompt(): Promise<string>;
     setPrompt(prompt: string): Promise<boolean>;
+  };
+  roles: {
+    list(): Promise<ReisaRole[]>;
+    create(input: ReisaRoleInput): Promise<ReisaRole>;
+    update(payload: ReisaRoleUpdate): Promise<ReisaRole>;
+    remove(roleId: string): Promise<boolean>;
   };
   /** 模块页面服务：仅能调用已激活模块声明的页面操作（管理面，不进 Agent 能力）。 */
   modulePage: {

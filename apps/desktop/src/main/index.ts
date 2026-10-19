@@ -4,7 +4,15 @@ import { testModelConnection } from '@reisa/agent-adapter';
 import { createAppRuntime, getModulePageService, type AppRuntime } from '../composition/runtime.ts';
 import { nextEnabledModules } from './enabled-modules.ts';
 import { ConversationManager, type IncomingAttachment } from './conversation-manager.ts';
-import { ConversationStore } from './conversations/store.ts';
+import {
+  ConversationStore,
+  RoleImmutableError,
+  RoleInUseError,
+  type CreateRoleInput,
+  type UpdateRoleInput,
+} from './conversations/store.ts';
+import { BUILTIN_ROLE_SEEDS } from './roles/seed.ts';
+import { resolveConversationSystemPrompt } from './roles/resolution.ts';
 import { runSmoke } from './smoke.ts';
 
 interface WindowBounds {
@@ -91,11 +99,21 @@ function getRuntime(): Promise<RuntimeAssembly> {
   runtimePromise ??= (async () => {
     const runtime = await createAppRuntime(app.getPath('userData'));
     const store = await ConversationStore.open(runtime.layout.conversationsDb);
+    // 内置角色播种：缺失插入，已存在则把 prompt 重置为代码内版本
+    store.seedBuiltinRoles(BUILTIN_ROLE_SEEDS);
     const manager = new ConversationManager({
       host: runtime.host,
       store,
       resolveModel: runtime.resolveModel,
-      resolveSystemPrompt: async () => runtime.config.get<string>('agent.systemPrompt'),
+      // 角色注入：会话绑定角色时用角色 prompt（可叠加默认提示词），
+      // 无角色或角色缺失时回退全局默认提示词（每轮 send 调用）
+      resolveSystemPrompt: (conversationId) =>
+        resolveConversationSystemPrompt({
+          store,
+          getBasePrompt: () => runtime.config.get<string>('agent.systemPrompt'),
+          conversationId,
+          warn: (message) => console.warn(`[roles] ${message}`),
+        }),
       onEvent: (conversationId, event) => {
         for (const window of BrowserWindow.getAllWindows()) {
           window.webContents.send('reisa/conversation/event', { conversationId, event });
@@ -125,8 +143,10 @@ function registerIpc(): void {
       );
     },
   );
-  ipcMain.handle('reisa/conversations/create', async (_event, title?: string) =>
-    (await getRuntime()).store.createConversation(title),
+  ipcMain.handle(
+    'reisa/conversations/create',
+    async (_event, title?: string, roleId?: string) =>
+      (await getRuntime()).store.createConversation(title, roleId),
   );
   ipcMain.handle(
     'reisa/conversations/rename',
@@ -146,6 +166,21 @@ function registerIpc(): void {
   ipcMain.handle('reisa/conversations/toolRecords', async (_event, conversationId: string) =>
     (await getRuntime()).store.listToolRecords(conversationId),
   );
+  // 角色管理（会话归属主应用，角色随会话库存储）：创建时选定，之后不可切换；
+  // 内置角色只读，被引用角色拒绝删除（提示停用）。错误信息对 renderer 可直接展示。
+  ipcMain.handle('reisa/roles/list', async () => (await getRuntime()).store.listRoles());
+  ipcMain.handle('reisa/roles/create', async (_event, input: CreateRoleInput) =>
+    (await getRuntime()).store.createRole(input),
+  );
+  ipcMain.handle(
+    'reisa/roles/update',
+    async (_event, payload: { id: string } & UpdateRoleInput) =>
+      (await getRuntime()).store.updateRole(payload.id, payload),
+  );
+  ipcMain.handle('reisa/roles/delete', async (_event, roleId: string) => {
+    (await getRuntime()).store.deleteRole(roleId);
+    return true;
+  });
   ipcMain.handle(
     'reisa/conversation/send',
     async (

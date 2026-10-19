@@ -13,8 +13,8 @@ export interface ConversationManagerOptions {
   readonly store: ConversationStore;
   /** 每轮运行前解析模型；基础配置未就绪时抛出可展示错误。 */
   readonly resolveModel: () => Promise<LanguageModel>;
-  /** 基础配置中的默认提示词；存在时作为本轮 system 消息提交。 */
-  readonly resolveSystemPrompt?: () => Promise<string | undefined>;
+  /** 按会话解析 system 消息：会话绑定角色时注入角色 prompt，否则回退全局默认提示词。 */
+  readonly resolveSystemPrompt?: (conversationId: string) => Promise<string | undefined>;
   /** 事件出口：宿主经 IPC 推送给 renderer；事件即已发生的公开调用与结果。 */
   readonly onEvent?: (conversationId: string, event: ConversationEvent) => void;
 }
@@ -146,7 +146,7 @@ export class ConversationManager {
 
       const [model, systemPrompt] = await Promise.all([
         this.#options.resolveModel(),
-        this.#options.resolveSystemPrompt?.() ?? Promise.resolve(undefined),
+        this.#options.resolveSystemPrompt?.(conversationId) ?? Promise.resolve(undefined),
       ]);
       const prompt = systemPrompt?.trim();
       const messages: ModelMessage[] = [

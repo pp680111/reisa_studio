@@ -6,10 +6,11 @@ import {
   createConversation,
   type Conversation,
 } from '../conversation/ConversationView';
-import { getBridge, type ReisaCapability } from '../bridge';
+import { getBridge, type ReisaCapability, type ReisaRole } from '../bridge';
 import { AppSidebar } from './AppSidebar';
 import { CapabilityDialog } from './CapabilityDialog';
 import { ModuleManager } from './ModuleManager';
+import { RolePickerDialog } from './RolePickerDialog';
 import { SettingsPage } from './SettingsPage';
 import { QuickSwitcher } from './QuickSwitcher';
 import { ResultContainer } from './ResultContainer';
@@ -67,6 +68,9 @@ export function AppShell() {
   const [notice, setNotice] = useState('');
   const [liveCapabilities, setLiveCapabilities] = useState<ReisaCapability[] | null>(null);
   const [modelLabel, setModelLabel] = useState('模型未配置');
+  // 角色：新建会话时选择，创建后不可切换（宿主 roles 通道）
+  const [roles, setRoles] = useState<ReisaRole[]>([]);
+  const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const togglePending = useRef(new Set<string>());
   const availableModules = navigationModules(modules, enabled, pinned);
   const capabilityCount =
@@ -98,6 +102,7 @@ export function AppShell() {
             title: item.title,
             messages: [],
             attachments: [],
+            ...(item.roleId !== undefined ? { roleId: item.roleId } : {}),
           })),
         );
         setActiveConversationId(first.id);
@@ -109,6 +114,7 @@ export function AppShell() {
         setActiveConversationId(created.id);
       }
       setLiveCapabilities(await bridge.conversation.listCapabilities());
+      setRoles(await bridge.roles.list());
       // 初始启用集合来自宿主状态（不再读 localStorage 副本）
       setRuntimeStates(toRuntimeStates(await bridge.conversation.listModules()));
       setModuleStatesLoaded(true);
@@ -141,24 +147,39 @@ export function AppShell() {
       setRecent((previous) => [nextRoute, ...previous.filter((id) => id !== nextRoute)]);
   };
   const newConversation = () => {
+    // 桌面模式：先选角色再创建（角色创建后不可切换）；浏览器预览直接建本地会话
     if (bridge) {
-      void bridge.conversation.createConversation().then((created) => {
-        const next: Conversation = {
-          id: created.id,
-          title: created.title,
-          messages: [],
-          attachments: [],
-        };
-        setConversations((previous) => [next, ...previous]);
-        setActiveConversationId(next.id);
-        setRoute('conversation');
-      });
+      setRolePickerOpen(true);
       return;
     }
     const next = createConversation();
     setConversations((previous) => [next, ...previous]);
     setActiveConversationId(next.id);
     setRoute('conversation');
+  };
+  const createConversationWithRole = (roleId?: string) => {
+    setRolePickerOpen(false);
+    void bridge!.conversation
+      .createConversation(undefined, roleId)
+      .then((created) => {
+        const next: Conversation = {
+          id: created.id,
+          title: created.title,
+          messages: [],
+          attachments: [],
+          ...(roleId !== undefined ? { roleId } : {}),
+        };
+        setConversations((previous) => [next, ...previous]);
+        setActiveConversationId(next.id);
+        setRoute('conversation');
+      })
+      .catch((error) => {
+        setNotice(error instanceof Error ? error.message : String(error));
+      });
+  };
+  const reloadRoles = () => {
+    if (!bridge) return;
+    void bridge.roles.list().then(setRoles).catch(() => {});
   };
   useEffect(() => {
     const media = window.matchMedia('(max-width: 680px)');
@@ -276,17 +297,18 @@ export function AppShell() {
       .then((list) => {
         if (list.length === 0) return;
         const known = new Set(conversations.map((item) => item.id));
-        setConversations((previous) => [
-          ...previous,
-          ...list
-            .filter((item) => !known.has(item.id))
-            .map((item) => ({
-              id: item.id,
-              title: item.title,
-              messages: [],
-              attachments: [],
-            })),
-        ]);
+          setConversations((previous) => [
+            ...previous,
+            ...list
+              .filter((item) => !known.has(item.id))
+              .map((item) => ({
+                id: item.id,
+                title: item.title,
+                messages: [],
+                attachments: [],
+                ...(item.roleId !== undefined ? { roleId: item.roleId } : {}),
+              })),
+          ]);
       });
   };
   const canLoadMore = bridge !== undefined && conversations.length >= CONVERSATION_PAGE_SIZE;
@@ -334,6 +356,12 @@ export function AppShell() {
                     ? '设置'
                     : (conversation?.title ?? '会话'))}
             </strong>
+            {route === 'conversation' && conversation?.roleId !== undefined && (
+              <span className="role-badge" title="角色在创建时已固定，不可切换">
+                <Icon name="sparkles" size={13} />
+                {roles.find((role) => role.id === conversation.roleId)?.name ?? '（角色已不存在）'}
+              </span>
+            )}
           </div>
           <div className="header-actions">
             {route === 'conversation' && (
@@ -411,6 +439,7 @@ export function AppShell() {
               bridge={bridge}
               modelLabel={modelLabel}
               onConnectionSaved={refreshModelLabel}
+              onRolesChanged={reloadRoles}
             />
           </div>
           {modules.map((module) => {
@@ -442,6 +471,12 @@ export function AppShell() {
         pinned={pinned}
         recent={recent}
         navigate={navigate}
+      />
+      <RolePickerDialog
+        open={rolePickerOpen}
+        onClose={() => setRolePickerOpen(false)}
+        roles={roles}
+        onConfirm={createConversationWithRole}
       />
       <CapabilityDialog
         open={capabilityOpen}

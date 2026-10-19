@@ -2709,3 +2709,122 @@ blockquote {
   background: var(--hover);
   color: var(--text);
 }
+
+/* ===== 会话角色：新建选择弹层与会话头只读徽标（追加于文件末尾） ===== */
+.role-picker-hint {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+}
+.role-picker-list {
+  display: grid;
+  gap: 8px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.role-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.role-picker-item:hover {
+  border-color: var(--accent, #7c6cf0);
+  background: var(--hover);
+}
+.role-picker-item-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.role-picker-item-main strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+.role-picker-item-main span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ===== 设置页：角色管理列表与编辑弹窗 ===== */
+.roles-manager {
+  display: grid;
+  gap: 12px;
+}
+.roles-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.roles-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.roles-list li.disabled {
+  opacity: 0.55;
+}
+.roles-item-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.roles-item-main strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.roles-item-main p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.roles-item-main small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.roles-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.role-editor {
+  display: grid;
+  gap: 14px;
+}
+.role-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.role-editor-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+}
