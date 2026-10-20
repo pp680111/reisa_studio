@@ -20,6 +20,8 @@
   --focus: #bfa3e4;
   --success: #588975;
   --success-soft: #ebf4ed;
+  --danger: #ab4a44;
+  --danger-soft: #f7ebea;
   --user-bubble: #efedf4;
   --scrollbar: #d4d1dd;
   --switch-off: #d1ced9;
@@ -53,6 +55,8 @@
   --focus: #8766b1;
   --success: #91bca1;
   --success-soft: #29352d;
+  --danger: #d2948e;
+  --danger-soft: #3c2b29;
   --user-bubble: #34303e;
   --scrollbar: #4c465b;
   --switch-off: #575061;

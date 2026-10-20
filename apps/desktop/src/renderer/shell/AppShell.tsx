@@ -108,9 +108,7 @@ export function AppShell() {
         setActiveConversationId(first.id);
       } else {
         const created = await bridge.conversation.createConversation();
-        setConversations([
-          { id: created.id, title: created.title, messages: [], attachments: [] },
-        ]);
+        setConversations([{ id: created.id, title: created.title, messages: [], attachments: [] }]);
         setActiveConversationId(created.id);
       }
       setLiveCapabilities(await bridge.conversation.listCapabilities());
@@ -157,29 +155,31 @@ export function AppShell() {
     setActiveConversationId(next.id);
     setRoute('conversation');
   };
-  const createConversationWithRole = (roleId?: string) => {
-    setRolePickerOpen(false);
-    void bridge!.conversation
-      .createConversation(undefined, roleId)
-      .then((created) => {
-        const next: Conversation = {
-          id: created.id,
-          title: created.title,
-          messages: [],
-          attachments: [],
-          ...(roleId !== undefined ? { roleId } : {}),
-        };
-        setConversations((previous) => [next, ...previous]);
-        setActiveConversationId(next.id);
-        setRoute('conversation');
-      })
-      .catch((error) => {
-        setNotice(error instanceof Error ? error.message : String(error));
-      });
+  const createConversationWithRole = async (roleId?: string): Promise<void> => {
+    try {
+      const created = await bridge!.conversation.createConversation(undefined, roleId);
+      const next: Conversation = {
+        id: created.id,
+        title: created.title,
+        messages: [],
+        attachments: [],
+        ...(roleId !== undefined ? { roleId } : {}),
+      };
+      setConversations((previous) => [next, ...previous]);
+      setActiveConversationId(next.id);
+      setRoute('conversation');
+      setRolePickerOpen(false);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   };
   const reloadRoles = () => {
     if (!bridge) return;
-    void bridge.roles.list().then(setRoles).catch(() => {});
+    void bridge.roles
+      .list()
+      .then(setRoles)
+      .catch(() => {});
   };
   useEffect(() => {
     const media = window.matchMedia('(max-width: 680px)');
@@ -297,18 +297,18 @@ export function AppShell() {
       .then((list) => {
         if (list.length === 0) return;
         const known = new Set(conversations.map((item) => item.id));
-          setConversations((previous) => [
-            ...previous,
-            ...list
-              .filter((item) => !known.has(item.id))
-              .map((item) => ({
-                id: item.id,
-                title: item.title,
-                messages: [],
-                attachments: [],
-                ...(item.roleId !== undefined ? { roleId: item.roleId } : {}),
-              })),
-          ]);
+        setConversations((previous) => [
+          ...previous,
+          ...list
+            .filter((item) => !known.has(item.id))
+            .map((item) => ({
+              id: item.id,
+              title: item.title,
+              messages: [],
+              attachments: [],
+              ...(item.roleId !== undefined ? { roleId: item.roleId } : {}),
+            })),
+        ]);
       });
   };
   const canLoadMore = bridge !== undefined && conversations.length >= CONVERSATION_PAGE_SIZE;
@@ -359,7 +359,10 @@ export function AppShell() {
             {route === 'conversation' && conversation?.roleId !== undefined && (
               <span className="role-badge" title="角色在创建时已固定，不可切换">
                 <Icon name="sparkles" size={13} />
-                {roles.find((role) => role.id === conversation.roleId)?.name ?? '（角色已不存在）'}
+                <span className="role-badge-name">
+                  {roles.find((role) => role.id === conversation.roleId)?.name ??
+                    '（角色已不存在）'}
+                </span>
               </span>
             )}
           </div>

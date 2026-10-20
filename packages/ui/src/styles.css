@@ -951,6 +951,28 @@ pre {
   flex-shrink: 0;
   margin-top: 3px;
 }
+/* 会话内回合级失败/停止提示：随消息流持久展示，不随切页消失 */
+.turn-issue {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 21px;
+  padding: 11px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface-secondary);
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.turn-issue.is-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.turn-issue > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
 .result-panel {
   width: 280px;
   flex-shrink: 0;
@@ -2710,56 +2732,178 @@ blockquote {
   color: var(--text);
 }
 
-/* ===== 会话角色：新建选择弹层与会话头只读徽标（追加于文件末尾） ===== */
-.role-picker-hint {
-  margin: 0 0 12px;
+/* ===== 新建会话：角色选择弹层与会话头只读徽标 ===== */
+.role-picker {
+  display: grid;
+  gap: 16px;
+  padding: 20px 22px 18px;
+}
+.role-picker-heading p {
+  margin: 0;
   font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+.role-picker-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: var(--faint);
+}
+.role-picker-eyebrow svg {
+  color: var(--accent);
 }
 .role-picker-list {
   display: grid;
   gap: 8px;
-  max-height: 52vh;
+  max-height: min(52vh, 390px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 3px 4px;
+  margin: -3px -4px;
 }
 .role-picker-item {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 12px;
   width: 100%;
-  padding: 12px 14px;
+  min-height: 66px;
+  padding: 12px 13px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 11px;
   background: var(--surface);
   color: var(--text);
   text-align: left;
   cursor: pointer;
 }
 .role-picker-item:hover {
-  border-color: var(--accent, #7c6cf0);
-  background: var(--hover);
+  border-color: var(--border-strong);
+  background: var(--surface-secondary);
 }
-.role-picker-item-main {
+.role-picker-item.selected {
+  border-color: var(--brand-border);
+  background: var(--accent-tint);
+}
+.role-picker-item:focus-visible {
+  outline-offset: 1px;
+}
+.role-picker-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border: 1px solid var(--brand-border);
+  border-radius: 9px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.role-picker-item.selected .role-picker-mark {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.role-picker-body {
   display: grid;
   gap: 3px;
+  flex: 1;
   min-width: 0;
+  padding-top: 1px;
 }
-.role-picker-item-main strong {
+.role-picker-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13.5px;
+  flex-wrap: wrap;
+  gap: 7px;
 }
-.role-picker-item-main span {
+.role-picker-title strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.role-picker-description {
   font-size: 12px;
+  line-height: 1.65;
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.role-picker-indicator {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-top: 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: transparent;
+}
+.role-picker-item.selected .role-picker-indicator {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.role-picker-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+.role-picker-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.role-picker-footer small {
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.role-picker-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.role-picker-footer .button.primary {
+  min-width: 104px;
 }
 .role-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  max-width: 190px;
+  padding: 3px 7px;
+  border: 1px solid var(--brand-border);
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent);
   font-size: 11.5px;
-  color: var(--muted);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.role-badge-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 520px) {
+  .role-picker {
+    padding: 17px 16px 15px;
+    gap: 13px;
+  }
+  .role-picker-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .role-picker-footer > div {
+    justify-content: flex-end;
+  }
 }
 
 /* ===== 设置页：角色管理列表与编辑弹窗 ===== */
@@ -2812,19 +2956,154 @@ blockquote {
   gap: 6px;
   flex-shrink: 0;
 }
+/* 编辑角色弹层：与角色选择弹层（role-picker）同一套设计语言 */
 .role-editor {
   display: grid;
-  gap: 14px;
+  gap: 16px;
+  padding: 20px 22px 18px;
+}
+.role-editor-heading p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+.role-editor-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: var(--faint);
+}
+.role-editor-eyebrow svg {
+  color: var(--accent);
+}
+/* 编辑弹层内自行控制纵向节奏，去掉 .field 的默认下边距 */
+.role-editor .field {
+  margin-bottom: 0;
 }
 .role-editor-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 14px;
 }
-.role-editor-check {
+/* 提示词独立分区：卡片包住标题行、编辑区与叠加开关 */
+.role-editor-prompt {
+  display: grid;
+  gap: 10px;
+  padding: 13px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-secondary);
+}
+.role-editor-prompt-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 10px;
+}
+.role-editor-prompt-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.role-editor-prompt-title svg {
+  color: var(--accent);
+}
+.role-editor-prompt-head small {
+  font-size: 11.5px;
+  color: var(--faint);
+  text-align: right;
+}
+.role-editor-prompt textarea {
+  min-height: 220px;
+  font-size: 13px;
+  line-height: 1.7;
+  border-radius: 9px;
+}
+.role-editor-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+}
+.role-editor-toggle:hover {
+  border-color: var(--border-strong);
+}
+/* 勾选态与角色选择项的选中态同语言：品牌边框 + 淡紫底 */
+.role-editor-toggle:has(input:checked) {
+  border-color: var(--brand-border);
+  background: var(--accent-tint);
+}
+.role-editor-toggle input {
+  width: auto;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.role-editor-toggle-text {
+  display: grid;
+  gap: 2px;
+}
+.role-editor-toggle-text strong {
   font-size: 12.5px;
-  color: var(--text);
+  font-weight: 550;
+}
+.role-editor-toggle-text small {
+  font-size: 12px;
+  color: var(--muted);
+}
+/* 页脚与角色选择弹层同款：分隔线 + 左提示右按钮，主按钮定宽 */
+.role-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.role-editor-footer small {
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.role-editor-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.role-editor-footer .button.primary {
+  min-width: 104px;
+}
+@media (max-width: 680px) {
+  .role-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 520px) {
+  .role-editor {
+    padding: 17px 16px 15px;
+    gap: 13px;
+  }
+  .role-editor-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .role-editor-footer > div {
+    justify-content: flex-end;
+  }
 }

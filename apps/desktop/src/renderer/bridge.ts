@@ -132,7 +132,12 @@ export interface ReisaBridge {
       conversationId: string,
       text: string,
       attachments?: ReisaAttachmentInput[],
-    ): Promise<{ status: 'completed' | 'cancelled' | 'error'; usage?: ReisaUsage }>;
+    ): Promise<{
+      status: 'completed' | 'cancelled' | 'error';
+      /** 失败原因（status='error' 时返回），供会话内持久提示。 */
+      error?: string;
+      usage?: ReisaUsage;
+    }>;
     cancel(conversationId: string): Promise<boolean>;
     listCapabilities(): Promise<ReisaCapability[]>;
     listModules(): Promise<ReisaModuleStatus[]>;

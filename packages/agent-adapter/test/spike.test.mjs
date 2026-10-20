@@ -4,9 +4,13 @@
  * 验证项：
  * 1. 每次请求携带全量工具定义，无静默筛选
  * 2. stopWhen: isLoopFinished() 下多步循环无步数上限、自然结束
- * 3. abortSignal 取消：循环停止、工具处理器收到已中止的信号
+ * 3. abortSignal 取消：循环停止、工具处理器收到的信号已中止
  * 4. 工具调用 ID / 参数 / 结果在消息历史中保持对应
  * 5. 事件流可完整映射为统一会话事件（无未覆盖的关键事件类型）
+ *
+ * ai@7.0.130 起取消语义变更（官方文档 "active tools receive the abort signal"）：
+ * abort 即刻终结事件流，在途工具执行的结果被遗弃（续延不再恢复）。
+ * 因此信号中止断言必须在 execute 内 abort() 之后同步读取，不能依赖 await 之后的续延。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -186,8 +190,9 @@ test('spike 3: 中途 abort 取消——循环停止、工具收到已中止信�
     inputSchema: jsonSchema({ type: 'object', properties: {} }),
     execute: async (_input, options) => {
       controller.abort();
-      await new Promise((resolve) => setImmediate(resolve));
+      // 同步读取：ai@7.0.130 起 abort 即刻终结事件流，await 之后的续延可能被遗弃
       observed.abortedAtTool = options?.abortSignal?.aborted ?? false;
+      await new Promise((resolve) => setImmediate(resolve));
       return { cancelled: true };
     },
   });

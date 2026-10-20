@@ -153,6 +153,10 @@ export class ConversationStore {
         error_code TEXT,
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
     const store = new ConversationStore(db, attachmentsDir ?? join(dirname(filePath), 'attachments'));
     store.#migrateConversationsRoleId();
@@ -439,33 +443,37 @@ export class ConversationStore {
   }
 
   /**
-   * 播种内置角色：缺失则插入（id 固定为种子 key）；已存在则把 prompt 重置为
-   * 代码内版本（内置角色不可被用户编辑，覆盖无冲突，便于随版本修复文案）。
+   * 播种默认角色（整个生命周期仅一次，meta 标记独立于角色表：
+   * 用户删除默认角色后不会在下次启动复活）。默认角色 = 可编辑、可停用、
+   * 可删除的普通角色；历史版本以「内置只读」语义播种的行统一降级为普通角色
+   * （迁移：builtin 只读已废弃，此前不可编辑的运维排查专家自此可编辑、可删除）。
    */
-  seedBuiltinRoles(seeds: readonly { key: string; input: CreateRoleInput }[]): void {
+  seedDefaultRoles(seeds: readonly { key: string; input: CreateRoleInput }[]): void {
+    this.#db.prepare('UPDATE roles SET builtin = 0 WHERE builtin = 1').run();
+    const seeded = this.#db.prepare('SELECT value FROM meta WHERE key = ?').get('roles.seeded');
+    if (seeded !== undefined) return;
     const now = Date.now();
     const insert = this.#db.prepare(
-      'INSERT OR IGNORE INTO roles (id, name, description, prompt, include_base_prompt, builtin, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 1, 0, ?, ?)',
+      'INSERT OR IGNORE INTO roles (id, name, description, prompt, include_base_prompt, builtin, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0, 0, ?, ?)',
     );
-    const resetBuiltin = this.#db.prepare(
-      'UPDATE roles SET name = ?, description = ?, prompt = ?, updated_at = ? WHERE id = ? AND builtin = 1',
-    );
-    for (const seed of seeds) {
-      insert.run(
-        seed.key,
-        seed.input.name,
-        seed.input.description?.trim() ?? '',
-        seed.input.prompt,
-        now,
-        now,
-      );
-      resetBuiltin.run(
-        seed.input.name,
-        seed.input.description?.trim() ?? '',
-        seed.input.prompt,
-        now,
-        seed.key,
-      );
+    const mark = this.#db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+    this.#db.exec('BEGIN');
+    try {
+      for (const seed of seeds) {
+        insert.run(
+          seed.key,
+          seed.input.name,
+          seed.input.description?.trim() ?? '',
+          seed.input.prompt,
+          now,
+          now,
+        );
+      }
+      mark.run('roles.seeded', '1');
+      this.#db.exec('COMMIT');
+    } catch (error) {
+      this.#db.exec('ROLLBACK');
+      throw error;
     }
   }
 

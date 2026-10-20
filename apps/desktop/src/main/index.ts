@@ -4,14 +4,8 @@ import { testModelConnection } from '@reisa/agent-adapter';
 import { createAppRuntime, getModulePageService, type AppRuntime } from '../composition/runtime.ts';
 import { nextEnabledModules } from './enabled-modules.ts';
 import { ConversationManager, type IncomingAttachment } from './conversation-manager.ts';
-import {
-  ConversationStore,
-  RoleImmutableError,
-  RoleInUseError,
-  type CreateRoleInput,
-  type UpdateRoleInput,
-} from './conversations/store.ts';
-import { BUILTIN_ROLE_SEEDS } from './roles/seed.ts';
+import { ConversationStore, type CreateRoleInput, type UpdateRoleInput } from './conversations/store.ts';
+import { DEFAULT_ROLE_SEEDS } from './roles/seed.ts';
 import { resolveConversationSystemPrompt } from './roles/resolution.ts';
 import { runSmoke } from './smoke.ts';
 
@@ -99,8 +93,8 @@ function getRuntime(): Promise<RuntimeAssembly> {
   runtimePromise ??= (async () => {
     const runtime = await createAppRuntime(app.getPath('userData'));
     const store = await ConversationStore.open(runtime.layout.conversationsDb);
-    // 内置角色播种：缺失插入，已存在则把 prompt 重置为代码内版本
-    store.seedBuiltinRoles(BUILTIN_ROLE_SEEDS);
+    // 默认角色播种：整个生命周期仅一次（meta 标记）；历史内置只读角色降级为可编辑的普通角色
+    store.seedDefaultRoles(DEFAULT_ROLE_SEEDS);
     const manager = new ConversationManager({
       host: runtime.host,
       store,

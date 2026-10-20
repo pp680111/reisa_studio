@@ -28,7 +28,9 @@ export type Entry =
       input?: unknown;
       output?: unknown;
       error?: string;
-    };
+    }
+  /** 回合级失败/停止的会话内提示；仅存在于当前界面状态，不持久化。 */
+  | { kind: 'turn-issue'; tone: 'error' | 'stopped'; text: string };
 
 function unwrapOutput(output: unknown): unknown {
   if (

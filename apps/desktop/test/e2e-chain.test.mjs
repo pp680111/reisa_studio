@@ -13,6 +13,8 @@ import { MockLanguageModelV4, simulateReadableStream } from 'ai/test';
 import { createAppRuntime } from '../src/composition/runtime.ts';
 import { ConversationManager } from '../src/main/conversation-manager.ts';
 import { ConversationStore } from '../src/main/conversations/store.ts';
+import { OPS_ROLE_KEY, DEFAULT_ROLE_SEEDS } from '../src/main/roles/seed.ts';
+import { resolveConversationSystemPrompt } from '../src/main/roles/resolution.ts';
 
 const usage = {
   inputTokens: { total: 5, noCache: 5 },
@@ -236,4 +238,124 @@ test('运行中二次发送被拒绝；停用模块后能力不可用', async ()
   );
   assert.equal(unavailable.status, 'error');
   assert.equal(unavailable.error?.code, 'CAPABILITY_UNAVAILABLE');
+});
+
+/** 纯文本回复的一步流（无工具调用）；返回扁平部件数组，直接作 simulateReadableStream 的 chunks。 */
+function textOnlyStep(text) {
+  return [
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: 't' },
+    { type: 'text-delta', id: 't', delta: text },
+    { type: 'text-end', id: 't' },
+    { type: 'finish', usage, finishReason: { unified: 'stop', raw: undefined } },
+  ];
+}
+
+test('端到端：resolveSystemPrompt 的提示词经指令通道提交，位于模型 prompt 首位', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'reisa-e2e-3-'));
+  const runtime = await createAppRuntime(userData);
+  const store = await ConversationStore.open(runtime.layout.conversationsDb);
+  const conversation = store.createConversation();
+
+  const model = new MockLanguageModelV4({
+    provider: 'mock-provider',
+    modelId: 'mock-model',
+    doStream: () => ({ stream: simulateReadableStream({ chunks: textOnlyStep('好的。') }) }),
+  });
+  const manager = new ConversationManager({
+    host: runtime.host,
+    store,
+    resolveModel: async () => model,
+    resolveSystemPrompt: async () => '全局默认提示词：请保持简洁。',
+  });
+
+  const turn = await manager.send(conversation.id, '打个招呼');
+  assert.equal(turn.status, 'completed');
+  assert.equal(model.doStreamCalls.length, 1);
+  const prompt = model.doStreamCalls[0].prompt;
+  assert.equal(prompt[0]?.role, 'system', '提示词应作为首条 system 提交给模型');
+  assert.ok(JSON.stringify(prompt[0]).includes('全局默认提示词'));
+  assert.deepEqual(
+    prompt.slice(1).map((message) => message.role),
+    ['user'],
+    '除指令外只有会话历史，不得出现重复 system',
+  );
+  // 指令是提交参数，不写入会话历史
+  assert.deepEqual(
+    store.getMessages(conversation.id).map((message) => message.role),
+    ['user', 'assistant'],
+  );
+});
+
+test('端到端：绑定内置角色的会话可正常完成回合（角色注入故障回归）', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'reisa-e2e-role-'));
+  const runtime = await createAppRuntime(userData);
+  const store = await ConversationStore.open(runtime.layout.conversationsDb);
+  store.seedDefaultRoles(DEFAULT_ROLE_SEEDS);
+  const conversation = store.createConversation(undefined, OPS_ROLE_KEY);
+  assert.equal(conversation.roleId, OPS_ROLE_KEY);
+
+  const manager = new ConversationManager({
+    host: runtime.host,
+    store,
+    resolveModel: async () =>
+      new MockLanguageModelV4({
+        provider: 'mock-provider',
+        modelId: 'mock-model',
+        doStream: () => ({
+          stream: simulateReadableStream({ chunks: textOnlyStep('收到，请描述故障现象。') }),
+        }),
+      }),
+    // 与组合根一致：会话绑定角色时解析角色 prompt
+    resolveSystemPrompt: (conversationId) =>
+      resolveConversationSystemPrompt({
+        store,
+        getBasePrompt: async () => undefined,
+        conversationId,
+      }),
+  });
+
+  // 2026-10 故障回归：system 曾被拼进 messages，被 AI SDK v7 validatePrompt 拒绝，
+  // 角色会话所有回合静默失败（status error、无回复、无提示）。
+  const turn = await manager.send(conversation.id, '生产环境 502 了，帮我排查');
+  assert.equal(turn.status, 'completed');
+  assert.deepEqual(
+    store.getMessages(conversation.id).map((message) => message.role),
+    ['user', 'assistant'],
+  );
+});
+
+test('端到端：模型流失败时 send 返回 error 状态与可展示原因', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'reisa-e2e-4-'));
+  const runtime = await createAppRuntime(userData);
+  const store = await ConversationStore.open(runtime.layout.conversationsDb);
+  const conversation = store.createConversation();
+
+  const manager = new ConversationManager({
+    host: runtime.host,
+    store,
+    resolveModel: async () =>
+      new MockLanguageModelV4({
+        provider: 'mock-provider',
+        modelId: 'mock-model',
+        doStream: () => ({
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't' },
+              { type: 'text-delta', id: 't', delta: '回答到一半…' },
+              { type: 'text-end', id: 't' },
+              { type: 'error', error: new Error('模拟模型流中断') },
+            ],
+          }),
+        }),
+      }),
+  });
+
+  const turn = await manager.send(conversation.id, '触发失败');
+  assert.equal(turn.status, 'error');
+  assert.ok(
+    typeof turn.error === 'string' && turn.error.length > 0,
+    '失败原因应随结果返回，供会话界面给出持久提示',
+  );
 });

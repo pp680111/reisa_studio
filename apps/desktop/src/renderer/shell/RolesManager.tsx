@@ -4,8 +4,8 @@ import type { ReisaBridge, ReisaRole } from '../bridge';
 
 /**
  * 角色管理（设置 · 会话区）：角色 = 一套会话 system prompt 方案。
- * 规则：角色只在新建会话时选定，创建后不可切换；内置角色只读（可复制）；
- * 被会话引用的角色拒绝删除（宿主返回错误，提示改用停用）。
+ * 规则：角色只在新建会话时选定，创建后不可切换；被会话引用的角色拒绝删除
+ * （宿主返回错误，提示改用停用）；默认角色（运维排查专家）与自建角色能力一致，均可编辑删除。
  */
 export function RolesManager({
   bridge,
@@ -122,7 +122,7 @@ export function RolesManager({
       {!bridge ? (
         <p className="muted">角色管理需要桌面运行时；浏览器预览下不可编辑。</p>
       ) : roles.length === 0 ? (
-        <p className="muted">暂无自定义角色。内置角色（如运维排查专家）始终可用。</p>
+        <p className="muted">暂无角色。首次启动会自动添加默认角色「运维排查专家」，可编辑或删除。</p>
       ) : (
         <ul className="roles-list">
           {roles.map((role) => (
@@ -140,46 +140,27 @@ export function RolesManager({
                 </small>
               </div>
               <div className="roles-item-actions">
-                {role.builtin ? (
-                  <Button
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      setDraft({
-                        name: `${role.name} 副本`,
-                        description: role.description,
-                        prompt: role.prompt,
-                        includeBasePrompt: role.includeBasePrompt,
-                      })
-                    }
-                  >
-                    复制
-                  </Button>
-                ) : (
-                  <>
-                    <Button
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() =>
-                        setDraft({
-                          id: role.id,
-                          name: role.name,
-                          description: role.description,
-                          prompt: role.prompt,
-                          includeBasePrompt: role.includeBasePrompt,
-                        })
-                      }
-                    >
-                      编辑
-                    </Button>
-                    <Button variant="ghost" disabled={busy} onClick={() => void toggleDisabled(role)}>
-                      {role.disabled ? '启用' : '停用'}
-                    </Button>
-                    <Button variant="ghost" disabled={busy} onClick={() => void remove(role)}>
-                      删除
-                    </Button>
-                  </>
-                )}
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    setDraft({
+                      id: role.id,
+                      name: role.name,
+                      description: role.description,
+                      prompt: role.prompt,
+                      includeBasePrompt: role.includeBasePrompt,
+                    })
+                  }
+                >
+                  编辑
+                </Button>
+                <Button variant="ghost" disabled={busy} onClick={() => void toggleDisabled(role)}>
+                  {role.disabled ? '启用' : '停用'}
+                </Button>
+                <Button variant="ghost" disabled={busy} onClick={() => void remove(role)}>
+                  删除
+                </Button>
               </div>
             </li>
           ))}
@@ -193,6 +174,13 @@ export function RolesManager({
       >
         {draft && (
           <div className="role-editor">
+            <div className="role-editor-heading">
+              <span className="role-editor-eyebrow">
+                <Icon name="sparkles" size={12} />
+                会话角色
+              </span>
+              <p>角色决定使用它的会话以什么样的身份与规则工作，在新建会话时选定后不可切换。</p>
+            </div>
             <div className="role-editor-grid">
               <Field label="角色名称">
                 <input
@@ -209,26 +197,36 @@ export function RolesManager({
                 />
               </Field>
             </div>
-            <Field label="提示词内容" hint="作为该角色会话的 system 消息，每轮注入">
+            <div className="role-editor-prompt">
+              <div className="role-editor-prompt-head">
+                <span className="role-editor-prompt-title">
+                  <Icon name="document" size={13} />
+                  提示词内容
+                </span>
+                <small>{draft.prompt.length} 字符 · 作为会话的 system 消息每轮注入</small>
+              </div>
               <textarea
                 value={draft.prompt}
                 onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
-                rows={14}
+                rows={12}
                 placeholder="描述这个角色的行为规则、输出约定与可用工具的使用方式…"
               />
-            </Field>
-            <label className="role-editor-check">
-              <input
-                type="checkbox"
-                checked={draft.includeBasePrompt}
-                onChange={(event) =>
-                  setDraft({ ...draft, includeBasePrompt: event.target.checked })
-                }
-              />
-              注入时叠加全局默认提示词（默认提示词在前）
-            </label>
-            <div className="form-footer">
-              <small>创建后角色绑定不可切换；编辑只影响后续轮次。</small>
+              <label className="role-editor-toggle">
+                <input
+                  type="checkbox"
+                  checked={draft.includeBasePrompt}
+                  onChange={(event) =>
+                    setDraft({ ...draft, includeBasePrompt: event.target.checked })
+                  }
+                />
+                <span className="role-editor-toggle-text">
+                  <strong>叠加全局默认提示词</strong>
+                  <small>开启后注入顺序：全局默认提示词在前，角色提示词在后</small>
+                </span>
+              </label>
+            </div>
+            <div className="role-editor-footer">
+              <small>角色在新建会话时选定后不可切换；编辑只影响后续轮次。</small>
               <div>
                 <Button variant="ghost" disabled={busy} onClick={() => setDraft(null)}>
                   取消

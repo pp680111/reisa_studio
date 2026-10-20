@@ -1,6 +1,6 @@
 /**
  * 角色化 prompt 管理测试：store 迁移（旧库补 role_id）、角色 CRUD 与删除守卫、
- * 内置角色种子（固定 id + prompt 版本重置）、会话绑定校验、注入解析优先级。
+ * 默认角色种子（空表播种为普通角色、历史内置行降级）、会话绑定校验、注入解析优先级。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ import {
   RoleImmutableError,
   RoleInUseError,
 } from '../src/main/conversations/store.ts';
-import { BUILTIN_ROLE_SEEDS, OPS_SYSTEM_PROMPT } from '../src/main/roles/seed.ts';
+import { DEFAULT_ROLE_SEEDS, OPS_SYSTEM_PROMPT } from '../src/main/roles/seed.ts';
 import { resolveConversationSystemPrompt } from '../src/main/roles/resolution.ts';
 import { REPO_EXPLORER_CAPABILITIES } from '@reisa/module-repo-explorer/contracts';
 import { KNOWLEDGE_CAPABILITIES } from '@reisa/module-knowledge/contracts';
@@ -30,22 +30,23 @@ async function makeStore() {
   };
 }
 
-test('种子：内置角色按固定 id 插入且不重复；prompt 版本变化时启动重置', async () => {
+test('种子：角色表为空时播种默认角色（普通角色）；非空时不插入、删除后不复活', async () => {
   const { store, cleanup } = await makeStore();
   try {
-    store.seedBuiltinRoles(BUILTIN_ROLE_SEEDS);
-    store.seedBuiltinRoles(BUILTIN_ROLE_SEEDS); // 幂等
+    store.seedDefaultRoles(DEFAULT_ROLE_SEEDS);
     const roles = store.listRoles();
-    assert.equal(roles.length, BUILTIN_ROLE_SEEDS.length);
-    assert.equal(roles[0].builtin, true);
-    assert.equal(roles[0].id, BUILTIN_ROLE_SEEDS[0].key);
+    assert.equal(roles.length, DEFAULT_ROLE_SEEDS.length);
+    assert.equal(roles[0].builtin, false, '默认角色是普通角色，不是内置只读');
+    assert.equal(roles[0].id, DEFAULT_ROLE_SEEDS[0].key);
+    assert.equal(roles[0].name, '运维排查专家');
 
-    // 代码内 prompt 更新 → 重新 seed 后库内版本被重置
-    const modified = [
-      { key: BUILTIN_ROLE_SEEDS[0].key, input: { ...BUILTIN_ROLE_SEEDS[0].input, prompt: 'updated prompt' } },
-    ];
-    store.seedBuiltinRoles(modified);
-    assert.equal(store.getRole(BUILTIN_ROLE_SEEDS[0].key).prompt, 'updated prompt');
+    store.seedDefaultRoles(DEFAULT_ROLE_SEEDS); // 幂等：非空表不再插入
+    assert.equal(store.listRoles().length, DEFAULT_ROLE_SEEDS.length);
+
+    // 用户删除默认角色后不复活（表非空 = 用户已有自己的角色集合）
+    store.deleteRole(DEFAULT_ROLE_SEEDS[0].key);
+    store.seedDefaultRoles(DEFAULT_ROLE_SEEDS);
+    assert.equal(store.listRoles().length, 0);
   } finally {
     await cleanup();
   }
@@ -90,7 +91,7 @@ test('旧库迁移：无 roles 表与 role_id 列的历史库打开后可正常�
     // 旧数据完好且能读到
     assert.equal(store.getConversation('conv_legacy').title, '旧会话');
     // 角色能力可用
-    store.seedBuiltinRoles(BUILTIN_ROLE_SEEDS);
+    store.seedDefaultRoles(DEFAULT_ROLE_SEEDS);
     const role = store.listRoles()[0];
     const created = store.createConversation('新会话', role.id);
     assert.equal(created.roleId, role.id);
@@ -125,13 +126,22 @@ test('角色 CRUD：创建、编辑、停用、删除', async () => {
   }
 });
 
-test('守卫：内置角色不可改删；被会话引用的角色拒绝删除（提示停用）', async () => {
+test('默认角色可编辑可删除；历史内置行播种时降级；被引用角色拒绝删除（提示停用）', async () => {
   const { store, cleanup } = await makeStore();
   try {
-    store.seedBuiltinRoles(BUILTIN_ROLE_SEEDS);
-    const builtin = store.listRoles().find((role) => role.builtin);
-    assert.throws(() => store.updateRole(builtin.id, { name: '改名' }), RoleImmutableError);
-    assert.throws(() => store.deleteRole(builtin.id), RoleImmutableError);
+    // 历史版本以 builtin=1 播种的行（如旧库中的运维排查专家）：播种时降级为普通角色
+    const legacy = store.createRole({ name: '历史内置', prompt: 'p', builtin: true });
+    store.seedDefaultRoles(DEFAULT_ROLE_SEEDS);
+    const demoted = store.getRole(legacy.id);
+    assert.equal(demoted.builtin, false, 'builtin 只读语义已废弃，历史行应被降级');
+    assert.equal(store.updateRole(demoted.id, { name: '历史内置（已降级）' }).name, '历史内置（已降级）');
+    store.deleteRole(demoted.id);
+    assert.equal(store.getRole(demoted.id), undefined);
+
+    // 守卫仍然保留：若未来出现 builtin=1 的行，依旧拒绝改删
+    const guarded = store.createRole({ name: '内置守卫', prompt: 'p', builtin: true });
+    assert.throws(() => store.updateRole(guarded.id, { name: '改名' }), RoleImmutableError);
+    assert.throws(() => store.deleteRole(guarded.id), RoleImmutableError);
 
     const role = store.createRole({ name: '引用角色', prompt: 'p' });
     store.createConversation('绑定会话', role.id);
@@ -217,7 +227,7 @@ test('注入解析：无角色→默认；角色→角色 prompt；叠加→拼�
   }
 });
 
-test('防漂移：内置角色 prompt 引用的工具名与实际注册的能力名一致', () => {
+test('防漂移：默认角色 prompt 引用的工具名与实际注册的能力名一致', () => {
   const registered = [...REPO_EXPLORER_CAPABILITIES, ...KNOWLEDGE_CAPABILITIES].map(
     (capability) => capability.name,
   );

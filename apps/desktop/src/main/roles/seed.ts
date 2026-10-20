@@ -1,12 +1,12 @@
 import type { CreateRoleInput } from '../conversations/store.ts';
 
 /**
- * 内置角色种子。内置角色不可编辑、不可删除、不可停用；
- * prompt 以代码内常量为权威，每次启动与库内版本比对，不一致则覆盖
- * （builtin 无用户编辑，覆盖无冲突，便于随版本修复文案）。
+ * 默认角色种子。默认角色 = 首次启动（角色表为空）时自动添加的普通角色：
+ * 与用户自建角色完全一致，可编辑、可停用、可删除；删除后不会在下次启动时复活。
+ * 历史版本以「内置只读角色」播种的行，在播种时统一降级为普通角色（builtin 只读语义废弃）。
  */
 
-export interface BuiltinRoleSeed {
+export interface DefaultRoleSeed {
   readonly key: string;
   readonly input: CreateRoleInput;
 }
@@ -103,8 +103,8 @@ export const OPS_SYSTEM_PROMPT = `# 运维排查专家
 | 当前方向卡住 | 当前方向所有步骤不可行 | 告知用户当前方向无法继续，给出换方向等建议 |
 `;
 
-/** 内置角色清单：首次打开 roles 表为空时播种。 */
-export const BUILTIN_ROLE_SEEDS: readonly BuiltinRoleSeed[] = [
+/** 默认角色清单：角色表为空时（首次启动）自动添加。 */
+export const DEFAULT_ROLE_SEEDS: readonly DefaultRoleSeed[] = [
   {
     key: OPS_ROLE_KEY,
     input: {
@@ -114,6 +114,3 @@ export const BUILTIN_ROLE_SEEDS: readonly BuiltinRoleSeed[] = [
     },
   },
 ];
-
-/** 内置角色的检索键（id 固定，便于启动时按 key 覆盖 prompt）。 */
-export const BUILTIN_ROLE_KEYS = new Set<string>(BUILTIN_ROLE_SEEDS.map((seed) => seed.key));

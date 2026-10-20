@@ -15,6 +15,11 @@ export interface StartConversationOptions {
   readonly model: LanguageModel;
   /** 宿主持有的会话历史（含既往工具调用消息），每次运行整体提交。 */
   readonly messages: readonly ModelMessage[];
+  /**
+   * 会话级指令（角色 / 全局 system prompt）。经框架 `instructions` 选项提交：
+   * AI SDK v7 的 validatePrompt 禁止 system 消息出现在 prompt/messages 字段，会直接抛错。
+   */
+  readonly instructions?: string;
   /** 全量已启用能力描述（可序列化，不含执行函数）；每次请求完整提交，不筛选（架构设计 §6.2、§6.3）。 */
   readonly capabilities: readonly CapabilityDefinition[];
   /** 能力调用入口，绑定框架工具的执行回调。 */
@@ -97,6 +102,7 @@ export function startConversation(options: StartConversationOptions): Conversati
   const result = streamText({
     model: options.model,
     messages: [...options.messages],
+    ...(options.instructions?.trim() ? { instructions: options.instructions } : {}),
     tools: toFrameworkTools(options.capabilities, options.invoker),
     stopWhen: isLoopFinished(),
     abortSignal: signal,
