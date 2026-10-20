@@ -270,11 +270,13 @@ test('取消优先于错误：流出现错误但用户已主动中止时仍为�
 
 test('取消：cancel 后循环停止，finish(abort)，工具收到已中止信号', async () => {
   let sessionRef;
+  const observed = { abortedAtInvoke: undefined };
   const model = scriptedModel([toolCallStep(1, 'knowledge__search'), textStep(2, '不应到达')]);
   const invoker = async (_capabilityId, _input, context) => {
     sessionRef.cancel();
+    // 同步读取：ai@7.0.130 起 abort 即刻终结事件流，await 之后的续延可能被遗弃
+    observed.abortedAtInvoke = context.signal.aborted;
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(context.signal.aborted, true, '工具执行中应看到已中止的信号');
     return { status: 'success', value: { cancelled: true } };
   };
 
@@ -291,6 +293,7 @@ test('取消：cancel 后循环停止，finish(abort)，工具收到已中止信
 
   const outcome = await sessionRef.outcome;
   assert.equal(outcome.status, 'cancelled');
+  assert.equal(observed.abortedAtInvoke, true, '工具执行中应看到已中止的信号');
   assert.equal(model.doStreamCalls.length, 1, '取消后不得发起第二次模型请求');
 });
 
@@ -309,4 +312,63 @@ test('toFrameworkTools：全量转换，键为兼容工具名', () => {
     assert.equal(converted.description, candidate.description);
     assert.equal(typeof converted.execute, 'function');
   }
+});
+
+test('会话指令：instructions 经指令通道提交为 system，回合可完成（角色注入回归）', async () => {
+  const record = { calls: [] };
+  const model = scriptedModel([textStep(1, '好的。')]);
+  const session = startConversation({
+    model,
+    messages: [{ role: 'user', content: '生产环境 502 了' }],
+    instructions: '# 运维排查专家\n你是 SRE。',
+    capabilities: DEFINITIONS,
+    invoker: successRegistrar(record),
+  });
+
+  const events = await collectEvents(session);
+  assert.deepEqual(events, [
+    { type: 'text-delta', text: '好的。' },
+    { type: 'finish', reason: 'stop' },
+  ]);
+  const outcome = await session.outcome;
+  assert.equal(outcome.status, 'completed');
+
+  // AI SDK v7 禁止 system 消息出现在 messages/prompt 字段；指令必须经 instructions 提交，
+  // 模型侧收到的 prompt 首条应是携带指令内容的 system 消息（2026-10 角色会话故障回归点）。
+  assert.equal(model.doStreamCalls.length, 1);
+  const prompt = model.doStreamCalls[0].prompt;
+  assert.equal(prompt[0]?.role, 'system', '指令应作为首条 system 消息提交给模型');
+  assert.ok(
+    JSON.stringify(prompt[0]).includes('运维排查专家'),
+    'system 消息应携带会话指令内容',
+  );
+  assert.deepEqual(
+    prompt.slice(1).map((message) => message.role),
+    ['user'],
+    '除指令外只有会话历史，不得出现重复 system',
+  );
+
+  // 指令是提交参数，不进入产出消息
+  assert.deepEqual(
+    outcome.messages.map((message) => message.role),
+    ['assistant'],
+  );
+});
+
+test('v7 契约：messages 携带 system 消息被框架校验拒绝（防止回退旧注入方式）', async () => {
+  const model = scriptedModel([textStep(1, '不应到达')]);
+  const session = startConversation({
+    model,
+    messages: [
+      { role: 'system', content: '旧方式注入' },
+      { role: 'user', content: '你好' },
+    ],
+    capabilities: DEFINITIONS,
+    invoker: successRegistrar({ calls: [] }),
+  });
+
+  const events = await collectEvents(session);
+  const error = events.find((event) => event.type === 'error');
+  assert.ok(error, '应产生 error 事件');
+  assert.match(error.message, /System messages are not allowed/);
 });

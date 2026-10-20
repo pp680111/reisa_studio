@@ -74,6 +74,31 @@ export async function runSmoke(): Promise<void> {
     assert.equal(state.nodeAvailable, 'undefined');
     assert.equal(state.overflow, false);
 
+    // 新建会话弹层：角色列表、默认选中与取消关闭（UI 回归）
+    await window.webContents.executeJavaScript(
+      "document.querySelector('.new-conversation')?.click()",
+    );
+    await waitFor("document.querySelectorAll('.role-picker-item').length >= 2");
+    const picker = (await window.webContents.executeJavaScript(
+      `({radios:[...document.querySelectorAll('.role-picker-item')].map((item)=>({checked:item.getAttribute('aria-checked'),text:item.textContent})),submit:document.querySelector('.role-picker-footer .button.primary')?.textContent?.trim(),padding:getComputedStyle(document.querySelector('.role-picker')).paddingLeft})`,
+    )) as {
+      radios: { checked: string | null; text: string | null }[];
+      submit?: string;
+      padding: string;
+    };
+    assert.equal(
+      picker.radios.filter((radio) => radio.checked === 'true').length,
+      1,
+      '角色选择应恰好有一个选中项',
+    );
+    assert.match(picker.radios[0]?.text ?? '', /默认助手/);
+    assert.match(picker.submit ?? '', /开始会话/);
+    assert.ok(parseFloat(picker.padding) > 0, '角色选择内容应有内边距');
+    await window.webContents.executeJavaScript(
+      "document.querySelector('.role-picker-footer .button.ghost')?.click()",
+    );
+    await waitFor("!document.querySelector('dialog')?.open");
+
     // 真实 IPC 往返：触发主进程运行层（node:sqlite、ModuleHost 装配）
     const conversations = await window.webContents.executeJavaScript(
       'window.reisa.conversation.listConversations()',

@@ -9,7 +9,8 @@ const api = {
   conversation: {
     listConversations: (options?: { limit?: number; offset?: number }) =>
       ipcRenderer.invoke('reisa/conversations/list', options),
-    createConversation: (title?: string) => ipcRenderer.invoke('reisa/conversations/create', title),
+    createConversation: (title?: string, roleId?: string) =>
+      ipcRenderer.invoke('reisa/conversations/create', title, roleId),
     renameConversation: (conversationId: string, title: string) =>
       ipcRenderer.invoke('reisa/conversations/rename', { conversationId, title }),
     deleteConversation: (conversationId: string) =>
@@ -54,6 +55,25 @@ const api = {
     testConnection: () => ipcRenderer.invoke('reisa/settings/testConnection'),
     getPrompt: () => ipcRenderer.invoke('reisa/settings/getPrompt'),
     setPrompt: (prompt: string) => ipcRenderer.invoke('reisa/settings/setPrompt', prompt),
+  },
+  // 角色管理（会话级 prompt 方案）：新建会话时选定，创建后不可切换
+  roles: {
+    list: () => ipcRenderer.invoke('reisa/roles/list'),
+    create: (input: {
+      name: string;
+      description?: string;
+      prompt: string;
+      includeBasePrompt?: boolean;
+    }) => ipcRenderer.invoke('reisa/roles/create', input),
+    update: (payload: {
+      id: string;
+      name?: string;
+      description?: string;
+      prompt?: string;
+      includeBasePrompt?: boolean;
+      disabled?: boolean;
+    }) => ipcRenderer.invoke('reisa/roles/update', payload),
+    remove: (roleId: string) => ipcRenderer.invoke('reisa/roles/delete', roleId),
   },
   // 模块页面服务（迁移设计文档 §8.1）：受限通道，action 白名单在主进程校验
   modulePage: {

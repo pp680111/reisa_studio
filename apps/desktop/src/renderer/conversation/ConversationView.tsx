@@ -12,6 +12,8 @@ export interface Conversation {
   title: string;
   messages: { id: string; text: string; role: 'user' | 'notice' }[];
   attachments: { id: string; name: string; file?: File }[];
+  /** 会话绑定角色；无角色 = 默认助手。创建时固定，不可切换（仅展示）。 */
+  roleId?: string;
   sample?: boolean;
 }
 export function createConversation(): Conversation {
@@ -227,6 +229,8 @@ export function ConversationView({
           text + (outgoing.length ? `\n附件：${outgoing.map((file) => file.name).join('、')}` : ''),
       },
     ]);
+    // 回合结局的会话内持久提示：在 finally 的 load() 之后追加（load 会用持久化状态覆盖界面）
+    let turnIssue: Extract<Entry, { kind: 'turn-issue' }> | undefined;
     try {
       const attachments: ReisaAttachmentInput[] = [];
       for (const file of outgoing) {
@@ -239,12 +243,29 @@ export function ConversationView({
       }
       const result = await bridge.conversation.send(conversation.id, text, attachments);
       if (result.usage) setLastUsage(result.usage);
+      if (result.status === 'error') {
+        turnIssue = {
+          kind: 'turn-issue',
+          tone: 'error',
+          text: `本轮回复未完成：${result.error ?? '模型流返回错误'}`,
+        };
+      } else if (result.status === 'cancelled') {
+        turnIssue = { kind: 'turn-issue', tone: 'stopped', text: '已停止生成本轮回复。' };
+      }
     } catch (error) {
-      notify(error instanceof Error ? error.message : String(error));
+      // IPC 通道错误自带 "Error invoking remote method '…':" 前缀，剥掉后只留可读原因
+      const raw = error instanceof Error ? error.message : String(error);
+      const message = raw.replace(/^Error invoking remote method '[^']+':\s*/, '');
+      notify(message);
+      turnIssue = { kind: 'turn-issue', tone: 'error', text: `本轮回复未完成：${message}` };
     } finally {
       runningRef.current = false;
       setRunning(false);
       await load();
+      if (turnIssue) {
+        const issue = turnIssue;
+        setEntries((previous) => [...previous, issue]);
+      }
     }
   };
 
@@ -355,6 +376,15 @@ export function ConversationView({
                     ) : (
                       <AssistantMessage key={`assistant-${index}`} text={entry.text} />
                     )
+                  ) : entry.kind === 'turn-issue' ? (
+                    <div
+                      className={`turn-issue ${entry.tone === 'error' ? 'is-error' : ''}`}
+                      key={`turn-issue-${index}`}
+                      role={entry.tone === 'error' ? 'alert' : 'status'}
+                    >
+                      <Icon name="help" size={14} />
+                      <span>{entry.text}</span>
+                    </div>
                   ) : (
                     <ToolCallRecord
                       key={entry.toolCallId}

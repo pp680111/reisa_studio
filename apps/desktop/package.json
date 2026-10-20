@@ -24,6 +24,7 @@
     "@reisa/module-card-note": "workspace:*",
     "@reisa/module-host": "workspace:*",
     "@reisa/module-knowledge": "workspace:*",
+    "@reisa/module-repo-explorer": "workspace:*",
     "@reisa/module-sdk": "workspace:*",
     "@reisa/module-todo": "workspace:*",
     "@reisa/ui": "workspace:*",

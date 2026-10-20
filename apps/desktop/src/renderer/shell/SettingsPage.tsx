@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ModuleContribution } from '@reisa/module-sdk';
 import { Badge, Button, Field, Icon, PageHeading } from '@reisa/ui';
 import type { ReisaBridge, ReisaConnectionTest, ReisaModelConnection } from '../bridge';
+import { RolesManager } from './RolesManager';
 import type { Theme } from './preferences';
 export function SettingsPage({
   theme,
@@ -14,6 +15,7 @@ export function SettingsPage({
   bridge,
   modelLabel,
   onConnectionSaved,
+  onRolesChanged,
 }: {
   theme: Theme;
   setTheme: (theme: Theme) => void;
@@ -28,6 +30,8 @@ export function SettingsPage({
   modelLabel?: string;
   /** 模型连接保存成功后的回调；宿主借此刷新右上角模型显示名。 */
   onConnectionSaved?: () => void;
+  /** 角色变更后的回调；宿主借此刷新角色选择器与会话徽标数据。 */
+  onRolesChanged?: () => void;
 }) {
   const [section, setSection] = useState('基础配置');
   const [prompt, setPrompt] = useState('');
@@ -265,7 +269,10 @@ export function SettingsPage({
             </Field>
           </div>
           <div className="setting-block">
-            <Field label="默认提示词">
+            <Field
+              label="默认提示词"
+              hint="会话未选择角色时生效；选择角色的会话使用角色提示词"
+            >
               <textarea
                 value={prompt}
                 onChange={(e) => {
@@ -282,6 +289,9 @@ export function SettingsPage({
                 {bridge ? '保存提示词' : '应用到预览'}
               </Button>
             </div>
+          </div>
+          <div className="setting-block">
+            <RolesManager bridge={bridge} notify={notify} onChanged={onRolesChanged} />
           </div>
           <div className="setting-block">
             <h3>公开能力</h3>

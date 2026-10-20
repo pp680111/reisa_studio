@@ -13,8 +13,8 @@ export interface ConversationManagerOptions {
   readonly store: ConversationStore;
   /** 每轮运行前解析模型；基础配置未就绪时抛出可展示错误。 */
   readonly resolveModel: () => Promise<LanguageModel>;
-  /** 基础配置中的默认提示词；存在时作为本轮 system 消息提交。 */
-  readonly resolveSystemPrompt?: () => Promise<string | undefined>;
+  /** 按会话解析 system 消息：会话绑定角色时注入角色 prompt，否则回退全局默认提示词。 */
+  readonly resolveSystemPrompt?: (conversationId: string) => Promise<string | undefined>;
   /** 事件出口：宿主经 IPC 推送给 renderer；事件即已发生的公开调用与结果。 */
   readonly onEvent?: (conversationId: string, event: ConversationEvent) => void;
 }
@@ -121,7 +121,7 @@ export class ConversationManager {
     conversationId: string,
     userText: string,
     attachments: readonly IncomingAttachment[] = [],
-  ): Promise<{ status: TurnStatus; usage?: ConversationUsage }> {
+  ): Promise<{ status: TurnStatus; error?: string; usage?: ConversationUsage }> {
     if (this.#controllers.has(conversationId)) {
       throw new Error('该会话正在运行中');
     }
@@ -146,17 +146,15 @@ export class ConversationManager {
 
       const [model, systemPrompt] = await Promise.all([
         this.#options.resolveModel(),
-        this.#options.resolveSystemPrompt?.() ?? Promise.resolve(undefined),
+        this.#options.resolveSystemPrompt?.(conversationId) ?? Promise.resolve(undefined),
       ]);
       const prompt = systemPrompt?.trim();
-      const messages: ModelMessage[] = [
-        ...(prompt ? [{ role: 'system', content: prompt } satisfies ModelMessage] : []),
-        ...history,
-        userMessage,
-      ];
+      const messages: ModelMessage[] = [...history, userMessage];
       const session: ConversationSession = startConversation({
         model,
         messages,
+        // 角色/全局提示词经指令通道提交：AI SDK v7 禁止 system 出现在 messages（会话故障回归点）
+        ...(prompt ? { instructions: prompt } : {}),
         capabilities: this.#options.host.listEnabledCapabilities(),
         invoker: this.#options.host.createInvoker(),
         signal: controller.signal,
@@ -169,7 +167,12 @@ export class ConversationManager {
       if (outcome.messages.length > 0) {
         this.#options.store.appendMessages(conversationId, outcome.messages);
       }
-      return { status: outcome.status, ...(outcome.usage ? { usage: outcome.usage } : {}) };
+      return {
+        status: outcome.status,
+        // 失败原因随结果返回：渲染层在会话内给出持久提示，而非只靠瞬时 toast
+        ...(outcome.error ? { error: outcome.error } : {}),
+        ...(outcome.usage ? { usage: outcome.usage } : {}),
+      };
     } finally {
       this.#controllers.delete(conversationId);
     }
