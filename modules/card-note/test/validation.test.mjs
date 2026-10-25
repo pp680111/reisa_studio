@@ -3,7 +3,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePageRange, validateQuote } from '../domain/validation.ts';
+import { parsePageRange, validateNoteContent } from '../domain/validation.ts';
 
 test('单页解析为起止相同', () => {
   assert.deepEqual(parsePageRange('12'), { start: 12, end: 12 });
@@ -24,7 +24,10 @@ test('非法页码被拒绝', () => {
   assert.throws(() => parsePageRange('0'), /页码必须为正整数/);
 });
 
-test('原文校验去除首尾空白，空白被拒绝', () => {
-  assert.equal(validateQuote('  原文内容  '), '原文内容');
-  assert.throws(() => validateQuote('  '), /原文不能为空/);
+test('内容校验：摘录与正文至少其一非空，返回去空白摘录', () => {
+  assert.equal(validateNoteContent('  原文内容  ', null), '原文内容');
+  assert.equal(validateNoteContent('', '  只有正文  '), '');
+  assert.equal(validateNoteContent('摘录', '正文'), '摘录');
+  assert.throws(() => validateNoteContent('  ', null), /摘录与正文不能同时为空/);
+  assert.throws(() => validateNoteContent('  ', '   '), /摘录与正文不能同时为空/);
 });

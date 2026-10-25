@@ -85,7 +85,9 @@ test('decode 校验：冲突标记、未知类型、字段缺失、note-tag 身�
   );
   assert.throws(
     () =>
-      decodeDocument('{"type":"book","id":"x","deleted":false,"createdAt":1,"updatedAt":1,"title":1}'),
+      decodeDocument(
+        '{"type":"book","id":"x","deleted":false,"createdAt":1,"updatedAt":1,"title":1}',
+      ),
     /title 必须是非空字符串/,
   );
   assert.throws(
@@ -97,7 +99,9 @@ test('decode 校验：冲突标记、未知类型、字段缺失、note-tag 身�
   );
   assert.throws(
     () =>
-      decodeDocument('{"type":"book","id":"x","deleted":false,"createdAt":10,"updatedAt":5,"title":"t"}'),
+      decodeDocument(
+        '{"type":"book","id":"x","deleted":false,"createdAt":10,"updatedAt":5,"title":"t"}',
+      ),
     /时间戳无效/,
   );
   // 合法的 note-tag tombstone 不要求身份字段匹配。
@@ -105,6 +109,18 @@ test('decode 校验：冲突标记、未知类型、字段缺失、note-tag 身�
     '{"type":"note-tag","id":"n--t","deleted":true,"createdAt":1,"updatedAt":2}',
   );
   assert.equal(tombstone.deleted, true);
+  // v0.2：摘录允许空字符串（无摘录的纯笔记），但类型必须是 string。
+  const emptyQuote = decodeDocument(
+    '{"type":"note","id":"n1","deleted":false,"createdAt":1,"updatedAt":1,"contentRevision":1,"bookId":"b","quote":"","comment":null}',
+  );
+  assert.equal(emptyQuote.fields['quote'], '');
+  assert.throws(
+    () =>
+      decodeDocument(
+        '{"type":"note","id":"n1","deleted":false,"createdAt":1,"updatedAt":1,"contentRevision":1,"bookId":"b","quote":42}',
+      ),
+    /quote 必须是字符串/,
+  );
 });
 
 test('快照导出：清单 + 全部实体文件 + 附件资产，路径与身份一致', () => {
@@ -134,7 +150,10 @@ test('快照导出：清单 + 全部实体文件 + 附件资产，路径与身�
     const result = exportSnapshot(context.database, context.workspace, DEVICE);
     assert.equal(result.documentCount, 5); // book + note + tag + note-tag + attachment
     assert.ok(existsSync(join(context.workspace, 'card-note.json')));
-    assert.deepEqual(JSON.parse(readFileSync(join(context.workspace, 'card-note.json'), 'utf-8')), SYNC_MANIFEST);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(context.workspace, 'card-note.json'), 'utf-8')),
+      SYNC_MANIFEST,
+    );
     for (const directory of ['books', 'notes', 'tags', 'note-tags', 'attachments', 'assets']) {
       assert.ok(existsSync(join(context.workspace, directory)), `缺少 ${directory}/`);
     }
@@ -144,7 +163,9 @@ test('快照导出：清单 + 全部实体文件 + 附件资产，路径与身�
     const noteDoc = documents.find((d) => d.type === 'note');
     assert.equal(noteDoc?.fields['quote'], '带附件的笔记');
     const attachmentDoc = documents.find((d) => d.type === 'attachment');
-    assert.ok(existsSync(join(context.workspace, 'assets', attachmentDoc?.fields['storedFileName'] ?? '')));
+    assert.ok(
+      existsSync(join(context.workspace, 'assets', attachmentDoc?.fields['storedFileName'] ?? '')),
+    );
   } finally {
     context.cleanup();
   }
@@ -259,7 +280,10 @@ test('导入：tombstone 删除实体、标签按归一化名合并、孤儿关�
     const tags = context.database.listTags();
     assert.equal(tags.length, 2);
     assert.equal(tags.find((tag) => tag.name === '重点')?.id, 'tag-remote-1');
-    assert.notEqual(tags.find((tag) => tag.name === '旧名'), undefined);
+    assert.notEqual(
+      tags.find((tag) => tag.name === '旧名'),
+      undefined,
+    );
     // 孤儿 note-tag 被跳过（ghost-note 不存在）
     assert.equal(context.database.getNoteTag('ghost-note', 'tag-remote-1'), null);
     // 书名按远端文档更新
@@ -375,7 +399,6 @@ test('附件导入强校验：哈希不符拒绝，匹配则落盘', () => {
   }
 });
 
-
 test('M6 兼容：旧 card_note 同步仓库（含 links/ 与 ai_accepted 标签）导入', () => {
   const context = makeContext();
   try {
@@ -389,24 +412,58 @@ test('M6 兼容：旧 card_note 同步仓库（含 links/ 与 ai_accepted 标签
     // 旧清单可能带 createdAt（D12）：多余字段必须被容忍
     writeFileSync(
       join(ws, 'card-note.json'),
-      JSON.stringify({ format: 'card-note-sync', formatVersion: 1, createdAt: 1780000000000 }, null, 2),
+      JSON.stringify(
+        { format: 'card-note-sync', formatVersion: 1, createdAt: 1780000000000 },
+        null,
+        2,
+      ),
       'utf-8',
     );
-    const json = (relative, value) => writeFileSync(join(ws, relative), `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
+    const json = (relative, value) =>
+      writeFileSync(join(ws, relative), `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
     json('books/old-book.json', {
-      type: 'book', id: 'old-book', deleted: false, createdAt: 100, updatedAt: 100, updatedBy: 'old-device', title: '旧应用的书',
+      type: 'book',
+      id: 'old-book',
+      deleted: false,
+      createdAt: 100,
+      updatedAt: 100,
+      updatedBy: 'old-device',
+      title: '旧应用的书',
     });
     json('notes/old-note.json', {
-      type: 'note', id: 'old-note', deleted: false, createdAt: 100, updatedAt: 100, updatedBy: 'old-device',
-      contentRevision: 4, bookId: 'old-book', quote: '旧数据正文', comment: null, pageStart: 3, pageEnd: null,
+      type: 'note',
+      id: 'old-note',
+      deleted: false,
+      createdAt: 100,
+      updatedAt: 100,
+      updatedBy: 'old-device',
+      contentRevision: 4,
+      bookId: 'old-book',
+      quote: '旧数据正文',
+      comment: null,
+      pageStart: 3,
+      pageEnd: null,
     });
     json('tags/old-tag.json', {
-      type: 'tag', id: 'old-tag', deleted: false, createdAt: 100, updatedAt: 100, updatedBy: 'old-device',
-      name: 'AI标签', normalizedName: 'ai标签',
+      type: 'tag',
+      id: 'old-tag',
+      deleted: false,
+      createdAt: 100,
+      updatedAt: 100,
+      updatedBy: 'old-device',
+      name: 'AI标签',
+      normalizedName: 'ai标签',
     });
     json('note-tags/old-note--old-tag.json', {
-      type: 'note-tag', id: 'old-note--old-tag', deleted: false, createdAt: 100, updatedAt: 100, updatedBy: 'old-device',
-      noteId: 'old-note', tagId: 'old-tag', source: 'ai_accepted',
+      type: 'note-tag',
+      id: 'old-note--old-tag',
+      deleted: false,
+      createdAt: 100,
+      updatedAt: 100,
+      updatedBy: 'old-device',
+      noteId: 'old-note',
+      tagId: 'old-tag',
+      source: 'ai_accepted',
     });
     // links/ 目录：目标类型集合不含 link（R4）——必须被静默忽略（即使内容是"非法"文档）
     json('links/some-link.json', { type: 'link', id: 'some-link', deleted: false });

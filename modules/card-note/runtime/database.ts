@@ -318,7 +318,7 @@ export class CardNoteDatabase {
     });
   }
 
-  // ---- 书籍（源 watchBooks/createBook/renameBook/deleteBook） ----
+  // ---- 笔记本（源 watchBooks/createBook/renameBook/deleteBook） ----
 
   listBooks(): Book[] {
     return (
@@ -335,7 +335,7 @@ export class CardNoteDatabase {
   createBook(rawTitle: string): Book {
     const title = rawTitle.trim();
     if (title === '') {
-      throw new DomainError('书名不能为空');
+      throw new DomainError('笔记本名称不能为空');
     }
     const now = this.#now();
     const id = randomUUID();
@@ -351,7 +351,7 @@ export class CardNoteDatabase {
   renameBook(bookId: string, rawTitle: string): Book {
     const title = rawTitle.trim();
     if (title === '') {
-      throw new DomainError('书名不能为空');
+      throw new DomainError('笔记本名称不能为空');
     }
     const now = this.#now();
     return this.transaction(() => {
@@ -359,7 +359,7 @@ export class CardNoteDatabase {
         .prepare('UPDATE books SET title = ?, updated_at = ? WHERE id = ?')
         .run(title, now, bookId);
       if (updated.changes === 0) {
-        throw new DomainError('书籍不存在或已被删除');
+        throw new DomainError('笔记本不存在或已被删除');
       }
       this.#recordSyncChange('book', bookId, 'upsert', now);
       return this.#requireBook(bookId);
@@ -367,7 +367,7 @@ export class CardNoteDatabase {
   }
 
   /**
-   * 删除书籍：先写全部 tombstone outbox，再删行（外键级联清 notes/note_tags/attachments）。
+   * 删除笔记本：先写全部 tombstone outbox，再删行（外键级联清 notes/note_tags/attachments）。
    * 源实现同序（app_database.dart deleteBook）；AI 任务清理随 R2 移除。
    */
   deleteBook(bookId: string): void {
@@ -417,7 +417,7 @@ export class CardNoteDatabase {
   #requireBook(bookId: string): Book {
     const book = this.getBook(bookId);
     if (book === null) {
-      throw new DomainError('书籍不存在或已被删除');
+      throw new DomainError('笔记本不存在或已被删除');
     }
     return book;
   }

@@ -2,7 +2,8 @@
  * 同步文档（迁移自 card_note `lib/features/sync/domain/sync_document.dart`）。
  * 版本化的业务实体文本表示：只含领域数据，凭据/本地 AI 工作/Git 配置绝不入内。
  * 迁移偏差（有意）：实体类型集合不含 link（决策 R4——双向链接已移除），
- * 旧 card_note 同步仓库中的 links/ 目录会被校验器静默忽略。
+ * 旧 card_note 同步仓库中的 links/ 目录会被校验器静默忽略；
+ * note 的 quote 自 v0.2 允许为空字符串（无摘录的纯笔记）。
  */
 
 const FORMAT_NAME = 'card-note-sync';
@@ -116,7 +117,11 @@ function validateFields(
       break;
     case 'note': {
       requiredString(fields, 'bookId');
-      requiredString(fields, 'quote');
+      // 摘录自 v0.2 允许为空字符串（无摘录的纯笔记）；类型仍必须是 string。
+      // 旧版本应用收到空摘录文档会在读取侧校验失败，属显式错误、不污染数据。
+      if (typeof fields['quote'] !== 'string') {
+        throw new Error('同步文档字段 quote 必须是字符串');
+      }
       if (
         !Number.isInteger(fields['contentRevision']) ||
         (fields['contentRevision'] as number) < 1

@@ -32,7 +32,7 @@ import {
 } from './database.ts';
 import { AttachmentStore, probeImage } from './attachments.ts';
 import { buildExport, importFromPath, writeExport } from './export.ts';
-import { validateQuote } from '../domain/validation.ts';
+import { validateNoteContent } from '../domain/validation.ts';
 import { GitClient } from './sync/git-client.ts';
 import { SyncCoordinator, SyncScheduler, type SyncCoordinatorLogger } from './sync/coordinator.ts';
 import {
@@ -207,7 +207,7 @@ export class CardNoteRuntime implements RuntimeModule {
           const saved = database.saveNote({
             noteId: optionalString('noteId'),
             bookId: string('bookId'),
-            quote: validateQuote(string('quote')),
+            quote: validateNoteContent(string('quote'), optionalString('comment')),
             comment: optionalString('comment'),
             pageStart: optionalInt('pageStart'),
             pageEnd: optionalInt('pageEnd'),

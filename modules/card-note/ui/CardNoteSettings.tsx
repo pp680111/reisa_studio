@@ -122,7 +122,7 @@ export function CardNoteSettings({ notify, close }: ModuleSettingsProps) {
               </p>
             ) : (
               <p className="card-note-sync-description">
-                通过 Git 仓库同步书籍、笔记、标签与附件。
+                通过 Git 仓库同步笔记本、笔记、标签与附件。
               </p>
             )}
           </div>
@@ -253,7 +253,7 @@ export function CardNoteSettings({ notify, close }: ModuleSettingsProps) {
             <Icon name="chevronDown" size={15} />
           </summary>
           <ul>
-            <li>同步目标是业务数据（书籍、笔记、标签、附件），不含凭据与本地设置。</li>
+            <li>同步目标是业务数据（笔记本、笔记、标签、附件），不含凭据与本地设置。</li>
             <li>每次导入远端数据前会自动备份数据库（card-note.sqlite.bak）。</li>
             <li>
               Git 服务商可以读取未加密的笔记内容，请使用私有仓库；凭据由系统 Git

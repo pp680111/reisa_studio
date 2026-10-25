@@ -17,7 +17,7 @@ function makeDatabase(ticks = []) {
   return database;
 }
 
-test('创建书籍并保存笔记：revision=1，outbox 记录 book/note upsert', () => {
+test('创建笔记本并保存笔记：revision=1，outbox 记录 book/note upsert', () => {
   const database = makeDatabase();
   const book = database.createBook('设计模式');
 
@@ -40,7 +40,7 @@ test('创建书籍并保存笔记：revision=1，outbox 记录 book/note upsert'
   assert.deepEqual(operations, ['book:upsert', 'note:upsert']);
 });
 
-test('删除书籍级联删除笔记，并写全部 tombstone', () => {
+test('删除笔记本级联删除笔记，并写全部 tombstone', () => {
   const database = makeDatabase();
   const book = database.createBook('重构');
   const tag = database.ensureTag('重点');
@@ -58,7 +58,7 @@ test('删除书籍级联删除笔记，并写全部 tombstone', () => {
 
   assert.deepEqual(database.listNotes(book.id), []);
   assert.deepEqual(database.listBooks(), []);
-  // 全局标签不随书籍删除（源设计即如此）。
+  // 全局标签不随笔记本删除（源设计即如此）。
   assert.equal(database.listTags().length, 1);
   const outbox = database.getPendingSyncChanges();
   const operations = outbox.map((change) => `${change.entityType}:${change.operation}`).sort();
@@ -285,7 +285,7 @@ test('outbox 同实体只保留最新变更，确认后清空', () => {
   );
 });
 
-test('允许创建同名书籍并通过内部 ID 区分', () => {
+test('允许创建同名笔记本并通过内部 ID 区分', () => {
   const database = makeDatabase();
   const first = database.createBook('同名书');
   const second = database.createBook('同名书');
@@ -296,14 +296,31 @@ test('允许创建同名书籍并通过内部 ID 区分', () => {
   assert.equal(database.getBook(second.id).title, '同名书');
 });
 
-test('空白书名被拒绝', () => {
+test('空白笔记本名称被拒绝', () => {
   const database = makeDatabase();
-  assert.throws(() => database.createBook('   '), /书名不能为空/);
-  const book = database.createBook('原书名');
-  assert.throws(() => database.renameBook(book.id, '  '), /书名不能为空/);
+  assert.throws(() => database.createBook('   '), /笔记本名称不能为空/);
+  const book = database.createBook('原名称');
+  assert.throws(() => database.renameBook(book.id, '  '), /笔记本名称不能为空/);
 });
 
-test('书内搜索只匹配原文与备注（不区分大小写）', () => {
+test('无摘录笔记允许保存（quote 为空串）', () => {
+  const database = makeDatabase();
+  const book = database.createBook('纯笔记');
+  const saved = database.saveNote({
+    noteId: null,
+    bookId: book.id,
+    quote: '',
+    comment: '只有正文',
+    pageStart: null,
+    pageEnd: null,
+  });
+
+  const loaded = database.getNote(saved.id);
+  assert.equal(loaded?.quote, '');
+  assert.equal(loaded?.comment, '只有正文');
+});
+
+test('笔记本内搜索只匹配原文与正文（不区分大小写）', () => {
   const database = makeDatabase();
   const book = database.createBook('搜索');
   const other = database.createBook('另一本');

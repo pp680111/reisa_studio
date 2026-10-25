@@ -2,10 +2,11 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import type { CardNoteDatabase, Note } from './database.ts';
 
 /**
- * 单本书导出/导入（迁移自 card_note `lib/features/export/data/book_export_service.dart`）。
+ * 单个笔记本导出/导入（迁移自 card_note `lib/features/export/data/book_export_service.dart`）。
  * 导出格式与 card_note v1.0 逐字段一致（可作旧版导出文件的回归基准）：
  * Markdown 按 createdAt 升序逐条输出区块；JSON 为 formatVersion 1 的结构化数据。
- * 导入始终作为新书副本（笔记生成新 UUID，标签按归一化名复用）；导出不包含链接与附件（源即如此）。
+ * 导入始终作为新笔记本副本（笔记生成新 UUID，标签按归一化名复用）；导出不包含链接与附件（源即如此）。
+ * v0.2 偏差：摘录允许为空（无摘录的纯笔记），Markdown 导出跳过空原文段。
  */
 
 export type ExportFormat = 'markdown' | 'json';
@@ -54,7 +55,7 @@ export function buildExport(
 ): ExportPreview {
   const book = database.getBook(bookId);
   if (book === null) {
-    throw new Error('书籍不存在或已被删除');
+    throw new Error('笔记本不存在或已被删除');
   }
   const notes = [...database.listNotes(bookId)]
     .sort((left, right) => {
@@ -101,10 +102,12 @@ function toMarkdown(
       `**页码：** ${pageLabel(note.pageStart, note.pageEnd)}`,
       `**标签：** ${tags.length === 0 ? '无' : tags.join('、')}`,
       '',
-      '### 原文',
-      note.quote,
-      '',
-      '### 备注',
+    );
+    if (note.quote.trim() !== '') {
+      buffer.push('### 原文', note.quote, '');
+    }
+    buffer.push(
+      '### 正文',
       note.comment !== null && note.comment.trim() !== '' ? note.comment : '（无）',
       '',
     );
@@ -183,7 +186,7 @@ export function importFromJsonString(database: CardNoteDatabase, source: string)
   });
   const importedBook = database.getBook(importedBookId);
   if (importedBook === null) {
-    throw new Error('导入失败：书籍写入未生效');
+    throw new Error('导入失败：笔记本写入未生效');
   }
   return { bookId: importedBook.id, title: importedBook.title, noteCount: parsed.notes.length };
 }
@@ -214,11 +217,11 @@ function parseJsonImport(source: string): { title: string; notes: ParsedImportNo
   const book = record['book'];
   const notes = record['notes'];
   if (typeof book !== 'object' || book === null || !Array.isArray(notes)) {
-    throw new Error('导出文件缺少书籍或笔记数据');
+    throw new Error('导出文件缺少笔记本或笔记数据');
   }
   const title = (book as Record<string, unknown>)['title'];
   if (typeof title !== 'string' || title.trim() === '') {
-    throw new Error('导出文件中的书名无效');
+    throw new Error('导出文件中的笔记本名称无效');
   }
   const importedNotes: ParsedImportNote[] = [];
   for (let index = 0; index < notes.length; index++) {
@@ -233,12 +236,13 @@ function parseJsonImport(source: string): { title: string; notes: ParsedImportNo
     const pageStart = entry['pageStart'];
     const pageEnd = entry['pageEnd'];
     const tags = entry['tags'];
-    if (typeof quote !== 'string' || quote.trim() === '') {
+    // 摘录改为可选（v0.2）：允许空字符串（无摘录的纯笔记），类型仍必须是 string。
+    if (typeof quote !== 'string') {
       throw new Error(`${label}的原文无效`);
     }
-    // 缺键与显式 null 均视为无备注（Dart 版缺键即 null）。
+    // 缺键与显式 null 均视为无正文（Dart 版缺键即 null）。
     if (comment !== null && comment !== undefined && typeof comment !== 'string') {
-      throw new Error(`${label}的备注无效`);
+      throw new Error(`${label}的正文无效`);
     }
     const pagesValid =
       (pageStart === null && pageEnd === null) ||

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Dialog, Field } from '@reisa/ui';
 
-/** 单字段文本输入对话框（创建/重命名书籍与标签共用）。 */
+/** 单字段文本输入对话框（创建/重命名笔记本与标签共用）。 */
 export function PromptDialog({
   open,
   title,

@@ -14,9 +14,9 @@ import { formatTime } from './format.ts';
 import { PromptDialog } from './PromptDialog.tsx';
 
 /**
- * 书籍列表（源 BookListPage，FR-01）：
- * updatedAt 倒序；创建/重命名/删除（级联警告）；同名书籍允许并存；
- * JSON 导入作为新书副本（源超出原 MVP 的实现，M4 移植）。
+ * 笔记本列表（源 BookListPage，FR-01）：
+ * updatedAt 倒序；创建/重命名/删除（级联警告）；同名笔记本允许并存；
+ * JSON 导入作为新笔记本副本（源超出原 MVP 的实现，M4 移植）。
  */
 export function BooksView({
   notify,
@@ -94,7 +94,7 @@ export function BooksView({
   const handleDelete = async (book: BookJson) => {
     if (
       !window.confirm(
-        `删除书籍「${book.title}」？\n其全部笔记、标签关联与附件将一并删除，且不可恢复。`,
+        `删除笔记本「${book.title}」？\n其全部笔记、标签关联与附件将一并删除，且不可恢复。`,
       )
     ) {
       return;
@@ -112,52 +112,56 @@ export function BooksView({
       <div className="card-note-library-tools">
         <div className="card-note-collection-label">
           <Icon name="book" size={17} />
-          <strong>我的书籍</strong>
+          <strong>我的笔记本</strong>
           {books !== null && <span>{books.length}</span>}
         </div>
         <div className="card-note-search" role="search">
           <Icon name="search" size={16} />
           <input
-            aria-label="搜索书籍"
+            aria-label="搜索笔记本"
             value={query}
-            placeholder="搜索书名…"
+            placeholder="搜索笔记本名称…"
             onChange={(event) => setQuery(event.target.value)}
           />
           {query !== '' && (
-            <IconButton name="close" label="清空书籍搜索" onClick={() => setQuery('')} />
+            <IconButton name="close" label="清空笔记本搜索" onClick={() => setQuery('')} />
           )}
         </div>
         <Button variant="ghost" onClick={onOpenTags}>
           标签管理
         </Button>
         <Button variant="ghost" disabled={importing} onClick={() => void handleImport()}>
-          {importing ? '导入中…' : '导入书籍'}
+          {importing ? '导入中…' : '导入笔记本'}
         </Button>
         <IconButton name="settings" label="模块设置" onClick={onOpenSettings} />
         <Button variant="primary" onClick={() => setCreating(true)}>
           <Icon name="plus" size={16} />
-          新建书籍
+          新建笔记本
         </Button>
       </div>
       {books === null && (
         <p className="card-note-loading" role="status">
-          正在加载书籍…
+          正在加载笔记本…
         </p>
       )}
       {books !== null && books.length > 0 && visibleBooks?.length === 0 && (
         <EmptyState
           icon="search"
-          title="没有找到这本书"
-          description="试试其他书名，或清空搜索查看全部书籍。"
+          title="没有找到这个笔记本"
+          description="试试其他名称，或清空搜索查看全部笔记本。"
         >
           <Button onClick={() => setQuery('')}>清空搜索</Button>
         </EmptyState>
       )}
 
       {books !== null && books.length === 0 && (
-        <EmptyState icon="book" title="还没有书籍" description="创建一本书，开始记录你的阅读笔记。">
+        <EmptyState
+          icon="book"
+          title="还没有笔记本"
+          description="创建一个笔记本，开始记录你的想法。"
+        >
           <Button variant="primary" onClick={() => setCreating(true)}>
-            创建书籍
+            创建笔记本
           </Button>
         </EmptyState>
       )}
@@ -198,17 +202,17 @@ export function BooksView({
 
       <PromptDialog
         open={creating}
-        title="创建书籍"
-        label="书名"
-        placeholder="例如：设计心理学"
+        title="创建笔记本"
+        label="笔记本名称"
+        placeholder="例如：读书摘记"
         confirmText="创建"
         onSubmit={handleCreate}
         onClose={() => setCreating(false)}
       />
       <PromptDialog
         open={renaming !== null}
-        title="重命名书籍"
-        label="书名"
+        title="重命名笔记本"
+        label="笔记本名称"
         initial={renaming?.title ?? ''}
         confirmText="保存"
         onSubmit={(title) => handleRename(renaming?.id ?? '', title)}

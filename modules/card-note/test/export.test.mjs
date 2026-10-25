@@ -1,7 +1,8 @@
 /**
  * 导出/导入单测（移植自 card_note test/book_export_test.dart）。
  * 格式基准：Markdown 区块结构与 JSON 字段集与 card_note v1.0 逐字一致，
- * 旧版导出文件可直接导入。
+ * 旧版导出文件可直接导入。v0.2 偏差：摘录允许为空，Markdown 导出跳过空原文段，
+ * “### 备注”段更名为“### 正文”。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,13 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CardNoteDatabase } from '../runtime/database.ts';
-import { buildExport, importFromJsonString, importFromPath, suggestedFileName, writeExport } from '../runtime/export.ts';
+import {
+  buildExport,
+  importFromJsonString,
+  importFromPath,
+  suggestedFileName,
+  writeExport,
+} from '../runtime/export.ts';
 
 function makeDatabase(ticks = []) {
   let fallback = 9_000_000;
@@ -45,11 +52,13 @@ test('Markdown 按创建时间升序导出并含标签/页码', () => {
     tagIds: [tag.id],
   });
 
-  const { content, suggestedFileName } = buildExport(database, book.id, 'markdown', { nowIso: FIXED_NOW });
+  const { content, suggestedFileName } = buildExport(database, book.id, 'markdown', {
+    nowIso: FIXED_NOW,
+  });
 
   assert.ok(content.indexOf('较早的笔记') < content.indexOf('较新的笔记'));
   assert.ok(content.includes('### 原文'));
-  assert.ok(content.includes('### 备注'));
+  assert.ok(content.includes('### 正文'));
   assert.ok(content.includes('**标签：** 重点'));
   assert.ok(content.includes('**页码：** 未填写'));
   assert.ok(content.includes('**页码：** 第 20-21 页'));
@@ -92,11 +101,31 @@ test('Markdown 导出整体格式与源实现逐行一致（黄金样例）', ()
       '### 原文',
       '摘录正文',
       '',
-      '### 备注',
+      '### 正文',
       '（无）',
       '',
     ].join('\n'),
   );
+});
+
+test('无摘录笔记导出 Markdown 时跳过原文段', () => {
+  const database = makeDatabase([9_000, 9_001, 1_000]);
+  const book = database.createBook('纯笔记');
+  database.saveNote({
+    noteId: null,
+    bookId: book.id,
+    quote: '',
+    comment: '只有正文的笔记',
+    pageStart: null,
+    pageEnd: null,
+    tagIds: [],
+  });
+
+  const { content } = buildExport(database, book.id, 'markdown', { nowIso: FIXED_NOW });
+  assert.ok(!content.includes('### 原文'));
+  assert.ok(content.includes('### 正文'));
+  assert.ok(content.includes('只有正文的笔记'));
+  database.close();
 });
 
 test('JSON 导出结构化字段完整（formatVersion 1）', () => {
@@ -166,16 +195,28 @@ test('导入自己的 JSON 导出为可同步新书（新 ID、标签复用、ou
 test('非法 JSON 导入按条报错（与源消息一致）', () => {
   const database = makeDatabase();
   assert.throws(() => importFromJsonString(database, 'not json'), /无法解析 JSON 文件/);
-  assert.throws(() => importFromJsonString(database, '{"formatVersion": 2}'), /这不是 Card Note 的 JSON 导出文件/);
   assert.throws(
-    () => importFromJsonString(database, JSON.stringify({ formatVersion: 1, book: { title: 'x' } })),
-    /缺少书籍或笔记数据/,
+    () => importFromJsonString(database, '{"formatVersion": 2}'),
+    /这不是 Card Note 的 JSON 导出文件/,
+  );
+  assert.throws(
+    () =>
+      importFromJsonString(database, JSON.stringify({ formatVersion: 1, book: { title: 'x' } })),
+    /缺少笔记本或笔记数据/,
   );
   assert.throws(
     () =>
       importFromJsonString(
         database,
-        JSON.stringify({ formatVersion: 1, book: { title: 'x' }, notes: [{ quote: '  ' }] }),
+        JSON.stringify({ formatVersion: 1, book: { title: 'x' }, notes: [{ quote: 42 }] }),
+      ),
+    /第 1 条笔记的原文无效/,
+  );
+  assert.throws(
+    () =>
+      importFromJsonString(
+        database,
+        JSON.stringify({ formatVersion: 1, book: { title: 'x' }, notes: [{}] }),
       ),
     /第 1 条笔记的原文无效/,
   );
@@ -194,11 +235,35 @@ test('非法 JSON 导入按条报错（与源消息一致）', () => {
   database.close();
 });
 
+test('空摘录笔记的 JSON 导出可再导入（v0.2 格式）', () => {
+  const database = makeDatabase([9_000, 9_001, 1_000]);
+  const book = database.createBook('空摘录导出');
+  database.saveNote({
+    noteId: null,
+    bookId: book.id,
+    quote: '',
+    comment: '只有正文',
+    pageStart: null,
+    pageEnd: null,
+    tagIds: [],
+  });
+  const { content } = buildExport(database, book.id, 'json', { nowIso: FIXED_NOW });
+  database.close();
+
+  const fresh = makeDatabase();
+  const result = importFromJsonString(fresh, content);
+  const notes = fresh.listNotes(result.bookId);
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].quote, '');
+  assert.equal(notes[0].comment, '只有正文');
+  fresh.close();
+});
+
 test('建议文件名净化非法字符', () => {
   const database = makeDatabase();
-  const book = database.createBook('书籍:/导出?');
-  assert.equal(suggestedFileName(book, 'markdown'), '书籍__导出_.md');
-  assert.equal(suggestedFileName(book, 'json'), '书籍__导出_.json');
+  const book = database.createBook('笔记本:/导出?');
+  assert.equal(suggestedFileName(book, 'markdown'), '笔记本__导出_.md');
+  assert.equal(suggestedFileName(book, 'json'), '笔记本__导出_.json');
   database.close();
 });
 

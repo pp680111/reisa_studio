@@ -22,9 +22,9 @@ interface NoteRow {
 const VIEW_MODES = ['列表', '网格'] as const;
 
 /**
- * 书籍详情（源 BookDetailPage，FR-08/FR-09/FR-11）：
+ * 笔记本详情（源 BookDetailPage，FR-08/FR-09/FR-11）：
  * 列表/卡片网格双视图（同一份查询结果；画板视图已随 R3 移除）+
- * 当前书籍内搜索（250ms 防抖，仅匹配原文与备注，两视图共用）。
+ * 当前笔记本内搜索（250ms 防抖，仅匹配原文与正文，两视图共用）。
  */
 export function BookDetailView({
   bookId,
@@ -57,7 +57,7 @@ export function BookDetailView({
       try {
         const book = await getBook(bookId);
         if (book === null) {
-          notify('书籍不存在或已被删除');
+          notify('笔记本不存在或已被删除');
           onBack();
           return;
         }
@@ -102,13 +102,13 @@ export function BookDetailView({
     <div className="card-note-view">
       <div className="card-note-toolbar">
         <Button variant="ghost" onClick={onBack}>
-          ← 返回书籍
+          ← 返回笔记本
         </Button>
       </div>
 
-      <PageHeading eyebrow="阅读笔记" title={title ?? '正在加载…'}>
+      <PageHeading eyebrow="卡片笔记" title={title ?? '正在加载…'}>
         <Button disabled={exporting} onClick={() => setExportOpen(true)}>
-          {exporting ? '导出中…' : '导出书籍'}
+          {exporting ? '导出中…' : '导出笔记本'}
         </Button>
         <Button variant="primary" onClick={() => onOpenEditor(null)}>
           <Icon name="plus" size={16} /> 新建笔记
@@ -124,9 +124,9 @@ export function BookDetailView({
         <div className="card-note-search" role="search">
           <Icon name="search" size={16} />
           <input
-            aria-label="搜索本书笔记"
+            aria-label="搜索本笔记本的笔记"
             value={query}
-            placeholder="搜索本书笔记的原文与备注"
+            placeholder="搜索本笔记本的原文与正文"
             onChange={(event) => setQuery(event.target.value)}
           />
           {query !== '' && (
@@ -144,7 +144,7 @@ export function BookDetailView({
         <EmptyState
           icon="search"
           title="没有匹配的笔记"
-          description={`当前书籍内没有原文或备注包含「${debouncedQuery.trim()}」。`}
+          description={`当前笔记本内没有原文或正文包含「${debouncedQuery.trim()}」。`}
         >
           <Button onClick={() => setQuery('')}>清空搜索</Button>
         </EmptyState>
@@ -192,10 +192,10 @@ export function BookDetailView({
         </div>
       )}
 
-      <Dialog open={exportOpen} onClose={() => setExportOpen(false)} title="导出书籍">
+      <Dialog open={exportOpen} onClose={() => setExportOpen(false)} title="导出笔记本">
         <div className="card-note-export">
           <p className="card-note-export-hint">
-            导出内容仅包含当前书籍的笔记（按创建时间从早到晚），不含链接与附件。
+            导出内容仅包含当前笔记本的笔记（按创建时间从早到晚），不含链接与附件。
           </p>
           <Button disabled={exporting} onClick={() => void handleExport('markdown')}>
             Markdown（.md）
@@ -219,10 +219,13 @@ function NoteSummary({
   tags: TagJson[];
   compact?: boolean;
 }) {
+  // v0.2：无摘录的纯笔记以正文为主体展示；有摘录时正文仍作附注。
+  const bodyText = note.quote.trim() !== '' ? note.quote : (note.comment ?? '').trim();
+
   return (
     <>
-      <p className={compact ? 'card-note-quote compact' : 'card-note-quote'}>{note.quote}</p>
-      {note.comment !== null && note.comment.trim() !== '' && (
+      <p className={compact ? 'card-note-quote compact' : 'card-note-quote'}>{bodyText}</p>
+      {note.quote.trim() !== '' && note.comment !== null && note.comment.trim() !== '' && (
         <p className="card-note-comment">{note.comment}</p>
       )}
       <div className="card-note-note-meta">

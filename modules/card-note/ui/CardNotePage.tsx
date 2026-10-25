@@ -8,7 +8,7 @@ import './CardNotePage.css';
 
 /**
  * 卡片笔记工作区（module-ui-design §3：模块页面自带视图状态机，无 URL 路由）：
- * 书籍列表 → 书籍详情（列表/搜索） → 笔记编辑器，另有全局标签管理。
+ * 笔记本列表 → 笔记本详情（列表/搜索） → 笔记编辑器，另有全局标签管理。
  * 数据一律经页面服务通道获取；刷新采用"操作后主动刷新 + 5 秒轮询"（决策 Q5，
  * 轮询覆盖克隆/同步导入与后台自动同步这类页面外变更；编辑器表单不轮询）。
  */
@@ -21,7 +21,7 @@ type View =
 
 export function CardNotePage({ openSettings, notify }: ModulePageProps) {
   const [view, setView] = useState<View>({ name: 'books' });
-  // 编辑器保存/删除后递增，触发书籍详情重新拉取（未来 M5 同步变更同样复用）。
+  // 编辑器保存/删除后递增，触发笔记本详情重新拉取（未来 M5 同步变更同样复用）。
   const [bookRefreshToken, setBookRefreshToken] = useState(0);
 
   return (

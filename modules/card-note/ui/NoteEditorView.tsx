@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, EmptyState, Field, Icon, IconButton } from '@reisa/ui';
-import { parsePageRange, validateQuote } from '../domain/validation.ts';
-import { tabularTextToMarkdown } from '../domain/markdown.ts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button, Field, Icon, IconButton } from '@reisa/ui';
+import { parsePageRange, validateNoteContent } from '../domain/validation.ts';
 import {
   deleteNote,
   ensureTag,
@@ -17,11 +16,12 @@ import {
   saveNote,
   type TagJson,
 } from './client.ts';
-import { MarkdownPreview } from './MarkdownPreview.tsx';
+import { MarkdownEditor } from './MarkdownEditor.tsx';
 
 /**
- * 笔记编辑器（源 NoteEditorPage，M2 完成度）：
- * Markdown 工具栏 + 编辑/预览切换（GFM 与 KaTeX 公式）、TSV 粘贴转表格、
+ * 笔记编辑器（源 NoteEditorPage，M2 完成度 + v0.2 结构调整）：
+ * 笔记正文与原文摘录均为 Markdown 编辑（工具栏 + 编辑/预览切换 + TSV 粘贴，共用 MarkdownEditor）；
+ * 摘录改为可选并支持折叠（仅视图状态，不清除已填内容）——摘录与正文至少其一非空即可保存。
  * 图片附件草稿区（≤10MB、PNG/JPEG/WebP；SHA-256 内容寻址随保存落库）。
  * 链接与 AI 建议区已随 R4/R1 移除。
  */
@@ -44,29 +44,6 @@ interface EditorSnapshot {
   attachmentIds: string[];
 }
 
-const MARKDOWN_TOOLBAR: ReadonlyArray<{
-  icon: string;
-  label: string;
-  prefix: string;
-  suffix: string;
-  placeholder: string;
-}> = [
-  { icon: 'heading', label: '标题', prefix: '## ', suffix: '', placeholder: '标题' },
-  { icon: 'bold', label: '粗体', prefix: '**', suffix: '**', placeholder: '粗体文字' },
-  { icon: 'italic', label: '斜体', prefix: '*', suffix: '*', placeholder: '斜体文字' },
-  { icon: 'quote', label: '引用', prefix: '> ', suffix: '', placeholder: '引用内容' },
-  { icon: 'list', label: '无序列表', prefix: '- ', suffix: '', placeholder: '列表项' },
-  { icon: 'link', label: '链接', prefix: '[', suffix: '](https://)', placeholder: '链接文字' },
-  {
-    icon: 'table',
-    label: '表格',
-    prefix: '',
-    suffix: '',
-    placeholder: '| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |',
-  },
-  { icon: 'code', label: '代码块', prefix: '```\n', suffix: '\n```', placeholder: '代码' },
-];
-
 export function NoteEditorView({
   bookId,
   noteId,
@@ -83,16 +60,15 @@ export function NoteEditorView({
   const [bookTitle, setBookTitle] = useState<string | null>(null);
   const [quote, setQuote] = useState('');
   const [comment, setComment] = useState('');
+  const [quoteExpanded, setQuoteExpanded] = useState(false);
   const [pageText, setPageText] = useState('');
   const [pageError, setPageError] = useState<string | null>(null);
-  const [quoteMode, setQuoteMode] = useState('编辑');
   const [allTags, setAllTags] = useState<TagJson[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set());
   const [newTagName, setNewTagName] = useState('');
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [snapshot, setSnapshot] = useState<EditorSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
-  const quoteRef = useRef<HTMLTextAreaElement | null>(null);
 
   const refreshTags = useCallback(async () => {
     try {
@@ -107,7 +83,7 @@ export function NoteEditorView({
       try {
         const book = await getBook(bookId);
         if (book === null) {
-          notify('书籍不存在或已被删除');
+          notify('笔记本不存在或已被删除');
           onBack();
           return;
         }
@@ -148,6 +124,7 @@ export function NoteEditorView({
           };
           setQuote(nextPage.quote);
           setComment(nextPage.comment);
+          setQuoteExpanded(nextPage.quote !== '');
           setPageText(nextPage.pageText);
           setSelectedTagIds(new Set(nextPage.tagIds));
           setSnapshot(nextPage);
@@ -176,39 +153,10 @@ export function NoteEditorView({
     onBack();
   };
 
-  const insertMarkdown = (prefix: string, suffix: string, placeholder: string) => {
-    const element = quoteRef.current;
-    const start = element?.selectionStart ?? quote.length;
-    const end = element?.selectionEnd ?? quote.length;
-    const selected = quote.slice(start, end);
-    const content = selected === '' ? placeholder : selected;
-    setQuote(quote.slice(0, start) + prefix + content + suffix + quote.slice(end));
-    requestAnimationFrame(() => {
-      element?.focus();
-      element?.setSelectionRange(start + prefix.length, start + prefix.length + content.length);
-    });
-  };
-
-  const handleQuotePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const source = event.clipboardData.getData('text/plain');
-    if (source === '') return;
-    const converted = tabularTextToMarkdown(source);
-    if (converted === null) return;
-    event.preventDefault();
-    const element = event.currentTarget;
-    const start = element.selectionStart ?? quote.length;
-    const end = element.selectionEnd ?? quote.length;
-    setQuote(quote.slice(0, start) + converted + quote.slice(end));
-    requestAnimationFrame(() => {
-      element.focus();
-      element.setSelectionRange(start + converted.length, start + converted.length);
-    });
-  };
-
   const handleSave = async () => {
     if (busy || snapshot === null) return;
     try {
-      const trimmedQuote = validateQuote(quote);
+      const trimmedQuote = validateNoteContent(quote, comment);
       let pageStart: number | null = null;
       let pageEnd: number | null = null;
       try {
@@ -322,13 +270,15 @@ export function NoteEditorView({
     });
   };
 
+  const hasContent = quote.trim() !== '' || comment.trim() !== '';
+
   return (
     <div
       className="card-note-view card-note-editor-view"
       onKeyDown={(event) => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
           event.preventDefault();
-          if (!event.nativeEvent.isComposing && quote.trim() !== '') void handleSave();
+          if (!event.nativeEvent.isComposing && hasContent) void handleSave();
         }
       }}
     >
@@ -348,71 +298,52 @@ export function NoteEditorView({
 
       <div className="card-note-section-heading">
         <h1>{noteId === null ? '新建笔记' : '编辑笔记'}</h1>
-        <p>摘录值得记住的文字，写下此刻的想法。</p>
+        <p>写下此刻的想法，也可以先摘录原文再作批注。</p>
       </div>
 
       <div className="card-note-editor">
         <div className="card-note-editor-main">
-          <div className="card-note-editor-section-title">
-            <strong>原文摘录</strong>
-            <span>支持 Markdown 与公式</span>
-          </div>
-          <div className="card-note-quote-tools">
-            <div className="card-note-markdown-toolbar" aria-label="Markdown 工具栏">
-              {MARKDOWN_TOOLBAR.map((item) => (
-                <IconButton
-                  key={item.label}
-                  name={item.icon}
-                  label={item.label}
-                  disabled={quoteMode !== '编辑'}
-                  onClick={() => insertMarkdown(item.prefix, item.suffix, item.placeholder)}
-                />
-              ))}
-            </div>
-            <div className="card-note-quote-tabs" role="group" aria-label="原文视图">
-              <button
-                type="button"
-                className={quoteMode === '编辑' ? 'active' : ''}
-                aria-pressed={quoteMode === '编辑'}
-                onClick={() => setQuoteMode('编辑')}
-              >
-                编辑
-              </button>
-              <button
-                type="button"
-                className={quoteMode === '预览' ? 'active' : ''}
-                aria-pressed={quoteMode === '预览'}
-                onClick={() => setQuoteMode('预览')}
-              >
-                预览
-              </button>
-            </div>
+          <div className="card-note-quote-section">
+            <button
+              type="button"
+              className="card-note-quote-toggle"
+              aria-expanded={quoteExpanded}
+              onClick={() => setQuoteExpanded((current) => !current)}
+            >
+              <strong>原文摘录</strong>
+              <span className="card-note-quote-toggle-hint">
+                {quoteExpanded
+                  ? '支持 Markdown 与公式'
+                  : quote.trim() === ''
+                    ? '点击添加'
+                    : '已填写 · 点击编辑'}
+              </span>
+              <Icon
+                name={quoteExpanded ? 'arrowUp' : quote.trim() === '' ? 'plus' : 'arrowDown'}
+                size={15}
+              />
+            </button>
+            {quoteExpanded && (
+              <MarkdownEditor
+                value={quote}
+                onChange={setQuote}
+                ariaLabel="原文摘录（可选）"
+                placeholder="粘贴或输入原文（支持 Markdown 与 LaTeX 公式）…"
+              />
+            )}
           </div>
 
-          {quoteMode === '编辑' ? (
-            <textarea
-              ref={quoteRef}
-              className="card-note-quote-input"
-              aria-label="原文摘录（必填）"
-              rows={9}
-              value={quote}
-              placeholder="粘贴或输入书籍原文（支持 Markdown 与 LaTeX 公式）…"
-              onPaste={handleQuotePaste}
-              onChange={(event) => setQuote(event.target.value)}
-            />
-          ) : (
-            <div className="card-note-quote-preview">
-              {quote.trim() === '' ? (
-                <EmptyState
-                  icon="document"
-                  title="暂无内容"
-                  description="原文为空，切回编辑模式填写。"
-                />
-              ) : (
-                <MarkdownPreview source={quote} />
-              )}
-            </div>
-          )}
+          <div className="card-note-editor-section-title">
+            <strong>笔记正文</strong>
+            <span>支持 Markdown 与公式</span>
+          </div>
+          <MarkdownEditor
+            value={comment}
+            onChange={setComment}
+            ariaLabel="笔记正文"
+            rows={10}
+            placeholder="写下你的想法、追问或延伸阅读线索…"
+          />
 
           <div className="card-note-attachments">
             <div className="card-note-attachments-heading">
@@ -470,15 +401,6 @@ export function NoteEditorView({
               </ul>
             )}
           </div>
-
-          <Field label="备注（可选）">
-            <textarea
-              rows={3}
-              value={comment}
-              placeholder="你的想法、追问或延伸阅读线索…"
-              onChange={(event) => setComment(event.target.value)}
-            />
-          </Field>
         </div>
         <aside className="card-note-editor-aside" aria-label="笔记信息">
           <div className="card-note-editor-section-title">
@@ -539,7 +461,9 @@ export function NoteEditorView({
               </Button>
             </div>
           </div>
-          <p className="card-note-editor-hint">标签在所有书籍间共享。选中标签，为这条笔记分类。</p>
+          <p className="card-note-editor-hint">
+            标签在所有笔记本间共享。选中标签，为这条笔记分类。
+          </p>
         </aside>
 
         <div className="card-note-editor-footer">
@@ -551,7 +475,7 @@ export function NoteEditorView({
                 : dirty
                   ? '有未保存的修改'
                   : noteId === null
-                    ? '开始记录你的第一段摘录'
+                    ? '开始写下你的第一条笔记'
                     : '所有修改已保存'}
           </small>
           <div>
@@ -561,7 +485,7 @@ export function NoteEditorView({
             </Button>
             <Button
               variant="primary"
-              disabled={busy || snapshot === null || quote.trim() === ''}
+              disabled={busy || snapshot === null || !hasContent}
               onClick={() => void handleSave()}
             >
               {busy ? '保存中…' : '保存笔记'}

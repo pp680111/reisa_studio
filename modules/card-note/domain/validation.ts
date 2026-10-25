@@ -28,10 +28,15 @@ export function parsePageRange(raw: string): PageRange | null {
   return { start, end };
 }
 
-export function validateQuote(raw: string): string {
-  const quote = raw.trim();
-  if (quote === '') {
-    throw new NoteValidationError('原文不能为空');
+/**
+ * 摘录与正文至少其一非空（v0.2 起：摘录不再必填，支持无摘录的纯笔记）。
+ * 返回去首尾空白后的摘录；正文空串在保存时归一化为 null。
+ */
+export function validateNoteContent(rawQuote: string, rawComment: string | null): string {
+  const quote = rawQuote.trim();
+  const comment = rawComment?.trim() ?? '';
+  if (quote === '' && comment === '') {
+    throw new NoteValidationError('摘录与正文不能同时为空');
   }
   return quote;
 }

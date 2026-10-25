@@ -11,7 +11,7 @@ import { CardNoteSettings } from './ui/CardNoteSettings.tsx';
 export const cardNoteManifest: ModuleContribution = {
   id: MODULE_ID,
   name: '卡片笔记',
-  description: '本地优先的阅读笔记卡片：书籍、摘录、备注、页码与全局标签（迁移自 Card Note）。',
+  description: '本地优先的笔记卡片：笔记本、摘录、正文、页码与全局标签（迁移自 Card Note）。',
   version: MODULE_VERSION,
   protocolVersion: '1',
   source: 'builtin',

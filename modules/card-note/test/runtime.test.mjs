@@ -54,7 +54,7 @@ test('激活后模块 active，且不注册任何 Agent 能力（决策 Q10）',
   }
 });
 
-test('页面服务：创建书籍/笔记 → 查询 → 级联删除 全链路', async () => {
+test('页面服务：创建笔记本/笔记 → 查询 → 级联删除 全链路', async () => {
   const { pageService, cleanup } = await makeHost();
   try {
     const book = await pageService('create_book', { title: '  设计心理学  ' });
@@ -109,9 +109,32 @@ test('页面服务：领域校验错误向上传递可读消息', async () => {
     const book = await pageService('create_book', { title: '书' });
     await assert.rejects(
       () => pageService('save_note', { bookId: book.id, quote: '   ' }),
-      /原文不能为空/,
+      /摘录与正文不能同时为空/,
     );
-    await assert.rejects(() => pageService('create_book', { title: ' ' }), /书名不能为空/);
+    await assert.rejects(
+      () => pageService('save_note', { bookId: book.id, quote: '', comment: '  ' }),
+      /摘录与正文不能同时为空/,
+    );
+    await assert.rejects(() => pageService('create_book', { title: ' ' }), /笔记本名称不能为空/);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('页面服务：无摘录笔记（quote 空串 + 正文）可保存', async () => {
+  const { pageService, cleanup } = await makeHost();
+  try {
+    const book = await pageService('create_book', { title: '纯笔记' });
+    const saved = await pageService('save_note', {
+      bookId: book.id,
+      quote: '',
+      comment: '只有正文',
+    });
+    assert.equal(saved.contentRevision, 1);
+    const notes = await pageService('list_notes', { bookId: book.id });
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].quote, '');
+    assert.equal(notes[0].comment, '只有正文');
   } finally {
     await cleanup();
   }

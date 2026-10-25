@@ -5,7 +5,7 @@ import { PromptDialog } from './PromptDialog.tsx';
 
 /**
  * 全局标签管理（源 TagManagementPage，FR-03）：
- * 标签库跨书籍共享；重命名做归一化唯一性校验；删除仅解除关联、不删笔记。
+ * 标签库跨笔记本共享；重命名做归一化唯一性校验；删除仅解除关联、不删笔记。
  */
 export function TagsView({
   notify,
@@ -71,7 +71,7 @@ export function TagsView({
     <div className="card-note-view">
       <div className="card-note-toolbar">
         <Button variant="ghost" onClick={onBack}>
-          ← 返回书籍
+          ← 返回笔记本
         </Button>
       </div>
 
