@@ -1,17 +1,5 @@
 /* 卡片笔记模块局部样式（architecture.md §9：模块局部样式，仅使用 @reisa/ui tokens）。 */
 
-.card-note-page,
-.card-note-editor,
-.card-note-prompt {
-  --card-note-danger: #b3434e;
-}
-
-:root[data-theme='dark'] .card-note-page,
-:root[data-theme='dark'] .card-note-editor,
-:root[data-theme='dark'] .card-note-prompt {
-  --card-note-danger: #ed939c;
-}
-
 .card-note-page {
   width: 100%;
   max-width: 1240px;
@@ -450,16 +438,6 @@
 
 .card-note-editor .card-note-md-preview {
   min-height: 260px;
-}
-
-.card-note-input-invalid {
-  border-color: var(--card-note-danger) !important;
-}
-
-.card-note-message.danger {
-  margin: -6px 0 0;
-  color: var(--card-note-danger);
-  font-size: 12.5px;
 }
 
 .card-note-tags-block {

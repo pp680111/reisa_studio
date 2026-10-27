@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Field, Icon, IconButton } from '@reisa/ui';
-import { parsePageRange, validateNoteContent } from '../domain/validation.ts';
+import { Button, Icon, IconButton } from '@reisa/ui';
+import { validateNoteContent } from '../domain/validation.ts';
 import {
   deleteNote,
   ensureTag,
@@ -39,7 +39,6 @@ interface AttachmentDraft {
 interface EditorSnapshot {
   quote: string;
   comment: string;
-  pageText: string;
   tagIds: string[];
   attachmentIds: string[];
 }
@@ -61,8 +60,11 @@ export function NoteEditorView({
   const [quote, setQuote] = useState('');
   const [comment, setComment] = useState('');
   const [quoteExpanded, setQuoteExpanded] = useState(false);
-  const [pageText, setPageText] = useState('');
-  const [pageError, setPageError] = useState<string | null>(null);
+  // 页码编辑已移除：既有页码仅在加载时读入，保存时原样写回，避免旧笔记数据被清空。
+  const [storedPages, setStoredPages] = useState<{ start: number | null; end: number | null }>({
+    start: null,
+    end: null,
+  });
   const [allTags, setAllTags] = useState<TagJson[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set());
   const [newTagName, setNewTagName] = useState('');
@@ -110,26 +112,20 @@ export function NoteEditorView({
             existing: true,
           }));
           setAttachments(drafts);
+          setStoredPages({ start: note.pageStart, end: note.pageEnd });
           const nextPage = {
             quote: note.quote,
             comment: note.comment ?? '',
-            pageText:
-              note.pageStart === null
-                ? ''
-                : note.pageStart === note.pageEnd
-                  ? String(note.pageStart)
-                  : `${note.pageStart}-${note.pageEnd}`,
             tagIds: [...noteTags.map((tag) => tag.id)].sort(),
             attachmentIds: drafts.map((draft) => draft.id),
           };
           setQuote(nextPage.quote);
           setComment(nextPage.comment);
           setQuoteExpanded(nextPage.quote !== '');
-          setPageText(nextPage.pageText);
           setSelectedTagIds(new Set(nextPage.tagIds));
           setSnapshot(nextPage);
         } else {
-          setSnapshot({ quote: '', comment: '', pageText: '', tagIds: [], attachmentIds: [] });
+          setSnapshot({ quote: '', comment: '', tagIds: [], attachmentIds: [] });
         }
       } catch (error) {
         notify(errorMessage(error));
@@ -142,7 +138,6 @@ export function NoteEditorView({
   const dirty = useDirty({
     quote,
     comment,
-    pageText,
     selectedTagIds,
     attachments,
     snapshot,
@@ -157,25 +152,14 @@ export function NoteEditorView({
     if (busy || snapshot === null) return;
     try {
       const trimmedQuote = validateNoteContent(quote, comment);
-      let pageStart: number | null = null;
-      let pageEnd: number | null = null;
-      try {
-        setPageError(null);
-        const range = parsePageRange(pageText);
-        pageStart = range?.start ?? null;
-        pageEnd = range?.end ?? null;
-      } catch (error) {
-        setPageError(error instanceof Error ? error.message : String(error));
-        return;
-      }
       setBusy(true);
       const result = await saveNote({
         noteId,
         bookId,
         quote: trimmedQuote,
         comment: comment.trim() === '' ? null : comment,
-        pageStart,
-        pageEnd,
+        pageStart: storedPages.start,
+        pageEnd: storedPages.end,
         tagIds: [...selectedTagIds],
         attachments: attachments.map((draft) =>
           draft.existing
@@ -406,24 +390,6 @@ export function NoteEditorView({
           <div className="card-note-editor-section-title">
             <strong>笔记信息</strong>
           </div>
-          <Field label="页码（可选）" hint="单页填 12，范围填 12-15。">
-            <input
-              className={pageError === null ? '' : 'card-note-input-invalid'}
-              aria-invalid={pageError !== null}
-              aria-describedby={pageError !== null ? 'card-note-page-error' : undefined}
-              value={pageText}
-              placeholder="例如：12 或 12-15"
-              onChange={(event) => {
-                setPageText(event.target.value);
-                setPageError(null);
-              }}
-            />
-          </Field>
-          {pageError !== null && (
-            <p id="card-note-page-error" role="alert" className="card-note-message danger">
-              {pageError}
-            </p>
-          )}
 
           <div className="card-note-tags-block">
             <span className="card-note-tags-label">标签（可选）</span>
@@ -475,7 +441,7 @@ export function NoteEditorView({
                 : dirty
                   ? '有未保存的修改'
                   : noteId === null
-                    ? '开始写下你的第一条笔记'
+                    ? ''
                     : '所有修改已保存'}
           </small>
           <div>
@@ -501,24 +467,22 @@ export function NoteEditorView({
 function useDirty(input: {
   quote: string;
   comment: string;
-  pageText: string;
   selectedTagIds: Set<string>;
   attachments: AttachmentDraft[];
   snapshot: EditorSnapshot | null;
 }): boolean {
-  const { quote, comment, pageText, selectedTagIds, attachments, snapshot } = input;
+  const { quote, comment, selectedTagIds, attachments, snapshot } = input;
   return useMemo(() => {
     if (snapshot === null) return false;
     if (quote !== snapshot.quote) return true;
     if (comment !== snapshot.comment) return true;
-    if (pageText.trim() !== snapshot.pageText) return true;
     const currentTags = [...selectedTagIds].sort();
     if (currentTags.length !== snapshot.tagIds.length) return true;
     if (currentTags.some((id, index) => id !== snapshot.tagIds[index])) return true;
     const currentAttachments = attachments.map((draft) => draft.id);
     if (currentAttachments.length !== snapshot.attachmentIds.length) return true;
     return currentAttachments.some((id, index) => id !== snapshot.attachmentIds[index]);
-  }, [quote, comment, pageText, selectedTagIds, attachments, snapshot]);
+  }, [quote, comment, selectedTagIds, attachments, snapshot]);
 }
 
 function humanBytes(size: number): string {
