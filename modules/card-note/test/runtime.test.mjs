@@ -57,8 +57,12 @@ test('激活后模块 active，且不注册任何 Agent 能力（决策 Q10）',
 test('页面服务：创建笔记本/笔记 → 查询 → 级联删除 全链路', async () => {
   const { pageService, cleanup } = await makeHost();
   try {
-    const book = await pageService('create_book', { title: '  设计心理学  ' });
+    const book = await pageService('create_book', {
+      title: '  设计心理学  ',
+      remark: '  值得重读\n配套练习  ',
+    });
     assert.equal(book.title, '设计心理学');
+    assert.equal(book.remark, '值得重读\n配套练习');
 
     const saved = await pageService('save_note', {
       bookId: book.id,
@@ -93,6 +97,16 @@ test('页面服务：创建笔记本/笔记 → 查询 → 级联删除 全链�
 
     const stats = await pageService('get_stats', {});
     assert.deepEqual(stats, { books: 1, notes: 1, tags: 1 });
+
+    // update_book：名称与备注一并更新；空备注归一化为 null
+    const renamed = await pageService('update_book', {
+      bookId: book.id,
+      title: '设计心理学（第2版）',
+      remark: '  ',
+    });
+    assert.equal(renamed.title, '设计心理学（第2版）');
+    assert.equal(renamed.remark, null);
+    assert.equal((await pageService('get_book', { bookId: book.id })).remark, null);
 
     await pageService('delete_book', { bookId: book.id });
     assert.deepEqual(await pageService('list_books', {}), []);

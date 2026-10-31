@@ -7,6 +7,7 @@ import type { CardNoteDatabase, Note } from './database.ts';
  * Markdown 按 createdAt 升序逐条输出区块；JSON 为 formatVersion 1 的结构化数据。
  * 导入始终作为新笔记本副本（笔记生成新 UUID，标签按归一化名复用）；导出不包含链接与附件（源即如此）。
  * v0.2 偏差：摘录允许为空（无摘录的纯笔记），Markdown 导出跳过空原文段。
+ * v0.3 偏差：笔记本备注 remark 进入 JSON 导出与 Markdown 头部；导入兼容无 remark 的旧文件。
  */
 
 export type ExportFormat = 'markdown' | 'json';
@@ -65,7 +66,7 @@ export function buildExport(
     .map((note) => ({ note, tags: database.getTagsForNote(note.id).map((tag) => tag.name) }));
   const content =
     format === 'markdown'
-      ? toMarkdown(book.title, notes, options.nowIso ?? new Date().toISOString())
+      ? toMarkdown(book.title, book.remark, notes, options.nowIso ?? new Date().toISOString())
       : toJson(book, notes, options.nowIso ?? new Date().toISOString());
   return { content, suggestedFileName: suggestedFileName(book, format) };
 }
@@ -85,10 +86,17 @@ export function writeExport(
 
 function toMarkdown(
   title: string,
+  remark: string | null,
   entries: Array<{ note: Note; tags: string[] }>,
   nowIso: string,
 ): string {
-  const buffer = [`# ${title}`, '', `> 导出时间：${nowIso}`, `> 笔记数量：${entries.length}`, ''];
+  const buffer = [`# ${title}`, '', `> 导出时间：${nowIso}`, `> 笔记数量：${entries.length}`];
+  if (remark !== null) {
+    // 多行备注逐行接在引用区；仅首行带「备注：」前缀。
+    const [first, ...rest] = remark.split('\n');
+    buffer.push(`> 备注：${first ?? ''}`, ...rest.map((line) => `> ${line}`));
+  }
+  buffer.push('');
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     if (entry === undefined) continue;
@@ -116,7 +124,7 @@ function toMarkdown(
 }
 
 function toJson(
-  book: { id: string; title: string; createdAt: number; updatedAt: number },
+  book: { id: string; title: string; remark: string | null; createdAt: number; updatedAt: number },
   entries: Array<{
     note: {
       id: string;
@@ -135,7 +143,13 @@ function toJson(
   const value = {
     formatVersion: 1,
     exportedAt: nowIso,
-    book: { id: book.id, title: book.title, createdAt: book.createdAt, updatedAt: book.updatedAt },
+    book: {
+      id: book.id,
+      title: book.title,
+      remark: book.remark,
+      createdAt: book.createdAt,
+      updatedAt: book.updatedAt,
+    },
     notes: entries.map(({ note, tags }) => ({
       id: note.id,
       quote: note.quote,
@@ -166,7 +180,7 @@ export function importFromJsonString(database: CardNoteDatabase, source: string)
   const parsed = parseJsonImport(source);
   let importedBookId = '';
   database.transaction(() => {
-    const book = database.createBook(parsed.title);
+    const book = database.createBook(parsed.title, parsed.remark);
     importedBookId = book.id;
     for (const entry of parsed.notes) {
       const tagIds = new Set<string>();
@@ -199,7 +213,11 @@ interface ParsedImportNote {
   readonly tags: string[];
 }
 
-function parseJsonImport(source: string): { title: string; notes: ParsedImportNote[] } {
+function parseJsonImport(source: string): {
+  title: string;
+  remark: string | null;
+  notes: ParsedImportNote[];
+} {
   let decoded: unknown;
   try {
     decoded = JSON.parse(source);
@@ -222,6 +240,11 @@ function parseJsonImport(source: string): { title: string; notes: ParsedImportNo
   const title = (book as Record<string, unknown>)['title'];
   if (typeof title !== 'string' || title.trim() === '') {
     throw new Error('导出文件中的笔记本名称无效');
+  }
+  // remark 自 v0.3 导出；旧文件缺键与显式 null 均视为无备注。
+  const remark = (book as Record<string, unknown>)['remark'];
+  if (remark !== null && remark !== undefined && typeof remark !== 'string') {
+    throw new Error('导出文件中的笔记本备注无效');
   }
   const importedNotes: ParsedImportNote[] = [];
   for (let index = 0; index < notes.length; index++) {
@@ -266,5 +289,9 @@ function parseJsonImport(source: string): { title: string; notes: ParsedImportNo
       tags: tags as string[],
     });
   }
-  return { title: title.trim(), notes: importedNotes };
+  return {
+    title: title.trim(),
+    remark: typeof remark === 'string' && remark.trim() !== '' ? remark.trim() : null,
+    notes: importedNotes,
+  };
 }

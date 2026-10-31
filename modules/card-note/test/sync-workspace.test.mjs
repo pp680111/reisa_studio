@@ -126,7 +126,7 @@ test('decode 校验：冲突标记、未知类型、字段缺失、note-tag 身�
 test('快照导出：清单 + 全部实体文件 + 附件资产，路径与身份一致', () => {
   const context = makeContext();
   try {
-    const book = context.database.createBook('快照书');
+    const book = context.database.createBook('快照书', '同步备注');
     const tag = context.database.ensureTag('重点');
     const note = context.database.saveNote({
       noteId: null,
@@ -162,6 +162,10 @@ test('快照导出：清单 + 全部实体文件 + 附件资产，路径与身�
     assert.equal(documents.length, 5);
     const noteDoc = documents.find((d) => d.type === 'note');
     assert.equal(noteDoc?.fields['quote'], '带附件的笔记');
+    // v0.3：book 文档携带 remark 字段
+    const bookDoc = documents.find((d) => d.type === 'book');
+    assert.equal(bookDoc?.fields['title'], '快照书');
+    assert.equal(bookDoc?.fields['remark'], '同步备注');
     const attachmentDoc = documents.find((d) => d.type === 'attachment');
     assert.ok(
       existsSync(join(context.workspace, 'assets', attachmentDoc?.fields['storedFileName'] ?? '')),
@@ -223,6 +227,7 @@ test('导入：tombstone 删除实体、标签按归一化名合并、孤儿关�
           updatedAt: 5,
           updatedBy: DEVICE,
           title: '本地书（远端改名）',
+          remark: '远端补充的备注',
         }),
       ),
       decodeDocument(
@@ -288,6 +293,7 @@ test('导入：tombstone 删除实体、标签按归一化名合并、孤儿关�
     assert.equal(context.database.getNoteTag('ghost-note', 'tag-remote-1'), null);
     // 书名按远端文档更新
     assert.equal(context.database.getBook(book.id)?.title, '本地书（远端改名）');
+    assert.equal(context.database.getBook(book.id)?.remark, '远端补充的备注');
   } finally {
     context.cleanup();
   }
@@ -475,6 +481,8 @@ test('M6 兼容：旧 card_note 同步仓库（含 links/ 与 ai_accepted 标签
     assert.equal(result.documentCount, 4);
     const book = context.database.getBook('old-book');
     assert.equal(book?.title, '旧应用的书');
+    // 旧应用文档无 remark 字段：缺省视为 null
+    assert.equal(book?.remark, null);
     const note = context.database.getNote('old-note');
     assert.equal(note?.contentRevision, 4);
     assert.equal(note?.pageStart, 3);

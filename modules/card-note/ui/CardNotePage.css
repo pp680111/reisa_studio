@@ -45,6 +45,20 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* 笔记本备注（v0.3）：详情页标题区下方的信息条，多行文本按原样换行 */
+.card-note-book-remark {
+  margin: 0;
+  padding: 10px 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
 .card-note-collection-label {
   display: flex;
   align-items: center;

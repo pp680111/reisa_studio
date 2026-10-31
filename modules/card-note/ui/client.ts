@@ -106,9 +106,10 @@ export async function pickSavePath(
 export const listBooks = () => callPage<BookJson[]>(PAGE_ACTIONS.listBooks);
 export const getBook = (bookId: string) =>
   callPage<BookJson | null>(PAGE_ACTIONS.getBook, { bookId });
-export const createBook = (title: string) => callPage<BookJson>(PAGE_ACTIONS.createBook, { title });
-export const renameBook = (bookId: string, title: string) =>
-  callPage<BookJson>(PAGE_ACTIONS.renameBook, { bookId, title });
+export const createBook = (title: string, remark: string | null) =>
+  callPage<BookJson>(PAGE_ACTIONS.createBook, { title, remark });
+export const updateBook = (bookId: string, title: string, remark: string | null) =>
+  callPage<BookJson>(PAGE_ACTIONS.updateBook, { bookId, title, remark });
 export const deleteBook = (bookId: string) =>
   callPage<DeletedResultJson>(PAGE_ACTIONS.deleteBook, { bookId });
 

@@ -9,6 +9,8 @@ import { DatabaseSync } from 'node:sqlite';
  * schema v1 = 源 schema v3 精简（迁移设计文档附录 A）：
  * - 移除 `ai_tag_suggestions` / `ai_jobs`（决策 R1/R2）、`note_links`（R4）；
  * - 移除 `app_settings`（v0.6：模块配置改存 `settings.json`，经 ModuleConfigScope）；
+ * - v0.3 起 books 增加 remark 列（笔记本备注，多行文本；源项目无此字段，
+ *   老库在构造时经 PRAGMA 探测自动补列）；
  * - 其余表结构与约束逐字段等价，UUID 主键 + UTC 毫秒时间戳与源一致，
  *   支撑 M6 经旧 Git 同步仓库直接导入。
  *
@@ -20,6 +22,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS books (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
+  remark TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -77,6 +80,8 @@ export class DomainError extends Error {}
 export interface Book {
   readonly id: string;
   readonly title: string;
+  /** 笔记本备注（v0.3 新增，源项目无此字段）；多行文本，trim 后为空视为 null。 */
+  readonly remark: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -136,6 +141,13 @@ export function normalizeTagName(value: string): string {
   return value.trim().toLowerCase();
 }
 
+/** 笔记本备注归一化：多行文本保留内部换行，仅去首尾空白，空串视为 null。 */
+function normalizeBookRemark(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
 /** note-tag 同步身份：与源项目及同步仓库格式一致（`<noteId>--<tagId>`）。 */
 export function noteTagSyncId(noteId: string, tagId: string): string {
   return `${noteId}--${tagId}`;
@@ -144,6 +156,7 @@ export function noteTagSyncId(noteId: string, tagId: string): string {
 interface BookRow {
   id: string;
   title: string;
+  remark: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -182,7 +195,13 @@ interface AttachmentRow {
 }
 
 function toBook(row: BookRow): Book {
-  return { id: row.id, title: row.title, createdAt: row.created_at, updatedAt: row.updated_at };
+  return {
+    id: row.id,
+    title: row.title,
+    remark: row.remark,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function toNote(row: NoteRow): Note {
@@ -237,6 +256,13 @@ export class CardNoteDatabase {
     this.#db = new DatabaseSync(filePath);
     this.#db.exec('PRAGMA foreign_keys = ON');
     this.#db.exec(SCHEMA);
+    // 老库迁移：既有 books 表没有 remark 列（v0.3 笔记本备注，源项目无此字段）。
+    const bookColumns = this.#db.prepare('PRAGMA table_info(books)').all() as unknown as Array<{
+      name: string;
+    }>;
+    if (!bookColumns.some((column) => column.name === 'remark')) {
+      this.#db.exec('ALTER TABLE books ADD COLUMN remark TEXT');
+    }
     this.#now = options.now ?? Date.now;
     this.#filePath = filePath;
   }
@@ -332,32 +358,37 @@ export class CardNoteDatabase {
     return row ? toBook(row) : null;
   }
 
-  createBook(rawTitle: string): Book {
+  createBook(rawTitle: string, rawRemark?: string | null): Book {
     const title = rawTitle.trim();
     if (title === '') {
       throw new DomainError('笔记本名称不能为空');
     }
+    const remark = normalizeBookRemark(rawRemark);
     const now = this.#now();
     const id = randomUUID();
     return this.transaction(() => {
       this.#db
-        .prepare('INSERT INTO books (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)')
-        .run(id, title, now, now);
+        .prepare(
+          'INSERT INTO books (id, title, remark, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+        )
+        .run(id, title, remark, now, now);
       this.#recordSyncChange('book', id, 'upsert', now);
-      return { id, title, createdAt: now, updatedAt: now };
+      return { id, title, remark, createdAt: now, updatedAt: now };
     });
   }
 
-  renameBook(bookId: string, rawTitle: string): Book {
+  /** 更新笔记本（名称 + 备注；源 renameBook 语义扩展，v0.3 起备注随名称一并编辑）。 */
+  updateBook(bookId: string, rawTitle: string, rawRemark: string | null): Book {
     const title = rawTitle.trim();
     if (title === '') {
       throw new DomainError('笔记本名称不能为空');
     }
+    const remark = normalizeBookRemark(rawRemark);
     const now = this.#now();
     return this.transaction(() => {
       const updated = this.#db
-        .prepare('UPDATE books SET title = ?, updated_at = ? WHERE id = ?')
-        .run(title, now, bookId);
+        .prepare('UPDATE books SET title = ?, remark = ?, updated_at = ? WHERE id = ?')
+        .run(title, remark, now, bookId);
       if (updated.changes === 0) {
         throw new DomainError('笔记本不存在或已被删除');
       }
@@ -800,12 +831,19 @@ export class CardNoteDatabase {
   }
 
   /** INSERT OR REPLACE：以同步文档为准覆盖整行（不触碰 created_at 语义之外的字段）。 */
-  upsertBookRow(input: { id: string; title: string; createdAt: number; updatedAt: number }): void {
+  upsertBookRow(input: {
+    id: string;
+    title: string;
+    remark: string | null;
+    createdAt: number;
+    updatedAt: number;
+  }): void {
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO books (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO books (id, title, remark, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
       )
-      .run(input.id, input.title, input.createdAt, input.updatedAt);
+      .run(input.id, input.title, input.remark, input.createdAt, input.updatedAt);
   }
 
   upsertNoteRow(input: {

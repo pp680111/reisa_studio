@@ -2,7 +2,8 @@
  * 导出/导入单测（移植自 card_note test/book_export_test.dart）。
  * 格式基准：Markdown 区块结构与 JSON 字段集与 card_note v1.0 逐字一致，
  * 旧版导出文件可直接导入。v0.2 偏差：摘录允许为空，Markdown 导出跳过空原文段，
- * “### 备注”段更名为“### 正文”。
+ * “### 备注”段更名为“### 正文”。v0.3 偏差：笔记本备注 remark 进入 JSON 与
+ * Markdown 头部；导入兼容无 remark 的旧文件（视为 null）。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +32,7 @@ const FIXED_NOW = '2026-10-04T00:00:00.000Z';
 
 test('Markdown 按创建时间升序导出并含标签/页码', () => {
   const database = makeDatabase([9_000, 9_001, 2_000, 1_000]);
-  const book = database.createBook('导出测试');
+  const book = database.createBook('导出测试', '重读书\n已读完第一遍');
   const tag = database.ensureTag('重点');
   database.saveNote({
     noteId: null,
@@ -64,6 +65,9 @@ test('Markdown 按创建时间升序导出并含标签/页码', () => {
   assert.ok(content.includes('**页码：** 第 20-21 页'));
   assert.ok(content.includes(`> 导出时间：${FIXED_NOW}`));
   assert.ok(content.includes('> 笔记数量：2'));
+  // v0.3：备注接在头部引用区，多行逐行加引用前缀
+  assert.ok(content.includes('> 备注：重读书'));
+  assert.ok(content.includes('> 已读完第一遍'));
   assert.match(suggestedFileName, /^导出测试\.md$/);
 });
 
@@ -130,7 +134,7 @@ test('无摘录笔记导出 Markdown 时跳过原文段', () => {
 
 test('JSON 导出结构化字段完整（formatVersion 1）', () => {
   const database = makeDatabase([9_000, 9_001, 1_000]);
-  const book = database.createBook('JSON 导出');
+  const book = database.createBook('JSON 导出', '结构化备注');
   database.saveNote({
     noteId: null,
     bookId: book.id,
@@ -148,6 +152,7 @@ test('JSON 导出结构化字段完整（formatVersion 1）', () => {
   assert.equal(decoded.formatVersion, 1);
   assert.equal(decoded.exportedAt, FIXED_NOW);
   assert.equal(decoded.book.title, 'JSON 导出');
+  assert.equal(decoded.book.remark, '结构化备注');
   assert.equal(note.quote, '原文内容');
   assert.equal(note.comment, null);
   assert.equal(note.pageStart, 8);
@@ -160,7 +165,7 @@ test('JSON 导出结构化字段完整（formatVersion 1）', () => {
 
 test('导入自己的 JSON 导出为可同步新书（新 ID、标签复用、outbox 有记录）', () => {
   const database = makeDatabase([9_000, 9_001, 1_000]);
-  const book = database.createBook('可导入的书');
+  const book = database.createBook('可导入的书', '导入保留的备注');
   const tag = database.ensureTag('复习');
   database.saveNote({
     noteId: null,
@@ -179,6 +184,7 @@ test('导入自己的 JSON 导出为可同步新书（新 ID、标签复用、ou
 
   assert.notEqual(result.bookId, book.id);
   assert.equal(result.title, '可导入的书');
+  assert.equal(fresh.getBook(result.bookId)?.remark, '导入保留的备注');
   assert.equal(result.noteCount, 1);
   const notes = fresh.listNotes(result.bookId);
   assert.equal(notes.length, 1);
@@ -190,6 +196,20 @@ test('导入自己的 JSON 导出为可同步新书（新 ID、标签复用、ou
   );
   assert.notEqual(fresh.getPendingSyncChanges().length, 0);
   fresh.close();
+});
+
+test('导入旧版导出文件：book 无 remark 字段时视为 null', () => {
+  const database = makeDatabase();
+  const source = JSON.stringify({
+    formatVersion: 1,
+    exportedAt: FIXED_NOW,
+    book: { id: 'old-book', title: '旧版导出', createdAt: 1, updatedAt: 1 },
+    notes: [],
+  });
+  const result = importFromJsonString(database, source);
+  assert.equal(result.title, '旧版导出');
+  assert.equal(database.getBook(result.bookId)?.remark, null);
+  database.close();
 });
 
 test('非法 JSON 导入按条报错（与源消息一致）', () => {

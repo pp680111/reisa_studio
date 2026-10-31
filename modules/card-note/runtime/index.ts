@@ -187,9 +187,11 @@ export class CardNoteRuntime implements RuntimeModule {
           return book === null ? null : toBookJson(book);
         }
         case PAGE_ACTIONS.createBook:
-          return toBookJson(database.createBook(string('title')));
-        case PAGE_ACTIONS.renameBook:
-          return toBookJson(database.renameBook(string('bookId'), string('title')));
+          return toBookJson(database.createBook(string('title'), optionalString('remark')));
+        case PAGE_ACTIONS.updateBook:
+          return toBookJson(
+            database.updateBook(string('bookId'), string('title'), optionalString('remark')),
+          );
         case PAGE_ACTIONS.deleteBook: {
           database.deleteBook(string('bookId'));
           const receipt: DeletedResultJson = { deleted: true };
@@ -382,6 +384,7 @@ function toBookJson(book: Book): BookJson {
   return {
     id: book.id,
     title: book.title,
+    remark: book.remark,
     createdAt: book.createdAt,
     updatedAt: book.updatedAt,
   };

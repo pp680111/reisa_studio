@@ -5,6 +5,10 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { CardNoteDatabase, noteTagSyncId } from '../runtime/database.ts';
 
 function makeDatabase(ticks = []) {
@@ -270,8 +274,8 @@ test('删除笔记写 tombstone 并级联清理标签关联', () => {
 test('outbox 同实体只保留最新变更，确认后清空', () => {
   const database = makeDatabase([100, 200, 300]);
   const book = database.createBook('第一版');
-  database.renameBook(book.id, '第二版');
-  database.renameBook(book.id, '第三版');
+  database.updateBook(book.id, '第二版', null);
+  database.updateBook(book.id, '第三版', null);
 
   const pending = database.getPendingSyncChanges().filter((change) => change.entityType === 'book');
   assert.equal(pending.length, 1);
@@ -300,7 +304,60 @@ test('空白笔记本名称被拒绝', () => {
   const database = makeDatabase();
   assert.throws(() => database.createBook('   '), /笔记本名称不能为空/);
   const book = database.createBook('原名称');
-  assert.throws(() => database.renameBook(book.id, '  '), /笔记本名称不能为空/);
+  assert.throws(() => database.updateBook(book.id, '  ', null), /笔记本名称不能为空/);
+});
+
+test('笔记本备注：创建与更新保留多行文本，空白归一化为 null', () => {
+  const database = makeDatabase();
+  const book = database.createBook('带备注的书', '  第一行\n第二行  ');
+  assert.equal(book.remark, '第一行\n第二行');
+  assert.equal(database.getBook(book.id)?.remark, '第一行\n第二行');
+
+  // 空白备注（含纯空白多行）归一化为 null；未传（undefined）同样为 null
+  const blank = database.createBook('空备注的书', '  \n  ');
+  assert.equal(blank.remark, null);
+  const noArg = database.createBook('未传备注的书');
+  assert.equal(noArg.remark, null);
+
+  const updated = database.updateBook(book.id, '带备注的书', '新备注');
+  assert.equal(updated.remark, '新备注');
+  assert.equal(database.getBook(book.id)?.remark, '新备注');
+  assert.equal(database.updateBook(book.id, '带备注的书', null).remark, null);
+  assert.equal(database.updateBook(book.id, '带备注的书', '').remark, null);
+});
+
+test('老库迁移：无 remark 列的 books 表打开时自动补列且可读写', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'card-note-migration-'));
+  const filePath = join(directory, 'card-note.sqlite');
+  try {
+    // 手工建 v0.2 旧 schema（无 remark）并写入一行旧数据
+    const legacy = new DatabaseSync(filePath);
+    legacy.exec(`
+      CREATE TABLE books (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    legacy
+      .prepare('INSERT INTO books (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)')
+      .run('legacy-book', '旧库的书', 100, 100);
+    legacy.close();
+
+    const database = new CardNoteDatabase(filePath);
+    try {
+      const legacyBook = database.getBook('legacy-book');
+      assert.equal(legacyBook?.title, '旧库的书');
+      assert.equal(legacyBook?.remark, null);
+      const updated = database.updateBook('legacy-book', '旧库的书', '补上的备注');
+      assert.equal(updated.remark, '补上的备注');
+    } finally {
+      database.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('无摘录笔记允许保存（quote 为空串）', () => {

@@ -8,11 +8,13 @@ import {
   listNotes,
   pickSavePath,
   previewExport,
+  updateBook,
   type ExportFormatJson,
   type NoteJson,
   type TagJson,
 } from './client.ts';
 import { formatTime, pageLabel } from './format.ts';
+import { PromptDialog } from './PromptDialog.tsx';
 
 interface NoteRow {
   note: NoteJson;
@@ -40,6 +42,8 @@ export function BookDetailView({
   onOpenEditor: (noteId: string | null) => void;
 }) {
   const [title, setTitle] = useState<string | null>(null);
+  const [remark, setRemark] = useState<string | null>(null);
+  const [editingInfo, setEditingInfo] = useState(false);
   const [rows, setRows] = useState<NoteRow[] | null>(null);
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -62,6 +66,7 @@ export function BookDetailView({
           return;
         }
         setTitle(book.title);
+        setRemark(book.remark);
         const notes = await listNotes(bookId, debouncedQuery);
         const tagsPerNote = await Promise.all(notes.map((note) => getNoteTags(note.id)));
         setRows(notes.map((note, index) => ({ note, tags: tagsPerNote[index] ?? [] })));
@@ -98,6 +103,15 @@ export function BookDetailView({
     }
   };
 
+  const handleUpdateInfo = async (newTitle: string, newRemark: string) => {
+    try {
+      await updateBook(bookId, newTitle, newRemark === '' ? null : newRemark);
+      await refresh();
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  };
+
   return (
     <div className="card-note-view">
       <div className="card-note-toolbar">
@@ -107,6 +121,12 @@ export function BookDetailView({
       </div>
 
       <PageHeading eyebrow="卡片笔记" title={title ?? '正在加载…'}>
+        <IconButton
+          name="edit"
+          label="编辑笔记本信息"
+          disabled={title === null}
+          onClick={() => setEditingInfo(true)}
+        />
         <Button disabled={exporting} onClick={() => setExportOpen(true)}>
           {exporting ? '导出中…' : '导出笔记本'}
         </Button>
@@ -114,6 +134,10 @@ export function BookDetailView({
           <Icon name="plus" size={16} /> 新建笔记
         </Button>
       </PageHeading>
+
+      {remark !== null && (
+        <p className="card-note-book-remark">{remark}</p>
+      )}
 
       <div className="card-note-library-tools">
         <span className="card-note-result-count" role="status">
@@ -205,6 +229,21 @@ export function BookDetailView({
           </Button>
         </div>
       </Dialog>
+
+      <PromptDialog
+        open={editingInfo}
+        title="编辑笔记本"
+        label="笔记本名称"
+        initial={title ?? ''}
+        secondary={{
+          label: '备注（可选）',
+          placeholder: '记录这本书的来源、阅读状态或任何说明…',
+          initial: remark ?? '',
+        }}
+        confirmText="保存"
+        onSubmit={handleUpdateInfo}
+        onClose={() => setEditingInfo(false)}
+      />
     </div>
   );
 }

@@ -20,7 +20,7 @@ export const PAGE_ACTIONS = {
   listBooks: 'list_books',
   getBook: 'get_book',
   createBook: 'create_book',
-  renameBook: 'rename_book',
+  updateBook: 'update_book',
   deleteBook: 'delete_book',
   listNotes: 'list_notes',
   getNote: 'get_note',
@@ -58,6 +58,8 @@ export type ModulePageResult<T> = {
 export type BookJson = {
   id: string;
   title: string;
+  /** 笔记本备注（v0.3 新增）：多行文本可空；trim 后为空返回 null。 */
+  remark: string | null;
   createdAt: number;
   updatedAt: number;
 };

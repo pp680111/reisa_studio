@@ -7,7 +7,7 @@ import {
   importBook,
   listBooks,
   pickPath,
-  renameBook,
+  updateBook,
   type BookJson,
 } from './client.ts';
 import { formatTime } from './format.ts';
@@ -15,9 +15,15 @@ import { PromptDialog } from './PromptDialog.tsx';
 
 /**
  * 笔记本列表（源 BookListPage，FR-01）：
- * updatedAt 倒序；创建/重命名/删除（级联警告）；同名笔记本允许并存；
+ * updatedAt 倒序；创建/编辑（名称 + 备注，v0.3）/删除（级联警告）；同名笔记本允许并存；
  * JSON 导入作为新笔记本副本（源超出原 MVP 的实现，M4 移植）。
  */
+
+/** 备注字段的共用文案（创建与编辑对话框一致）。 */
+const REMARK_FIELD = {
+  label: '备注（可选）',
+  placeholder: '记录这本书的来源、阅读状态或任何说明…',
+};
 export function BooksView({
   notify,
   onOpenBook,
@@ -31,7 +37,7 @@ export function BooksView({
 }) {
   const [books, setBooks] = useState<BookJson[] | null>(null);
   const [creating, setCreating] = useState(false);
-  const [renaming, setRenaming] = useState<BookJson | null>(null);
+  const [editing, setEditing] = useState<BookJson | null>(null);
   const [importing, setImporting] = useState(false);
   const [query, setQuery] = useState('');
   const visibleBooks = books?.filter((book) =>
@@ -72,9 +78,9 @@ export function BooksView({
     }
   };
 
-  const handleCreate = async (title: string) => {
+  const handleCreate = async (title: string, remark: string) => {
     try {
-      const book = await createBook(title);
+      const book = await createBook(title, remark === '' ? null : remark);
       await refresh();
       onOpenBook(book.id);
     } catch (error) {
@@ -82,9 +88,9 @@ export function BooksView({
     }
   };
 
-  const handleRename = async (bookId: string, title: string) => {
+  const handleUpdate = async (bookId: string, title: string, remark: string) => {
     try {
-      await renameBook(bookId, title);
+      await updateBook(bookId, title, remark === '' ? null : remark);
       await refresh();
     } catch (error) {
       notify(errorMessage(error));
@@ -186,8 +192,8 @@ export function BooksView({
               <div className="card-note-row-actions">
                 <IconButton
                   name="edit"
-                  label={`重命名「${book.title}」`}
-                  onClick={() => setRenaming(book)}
+                  label={`编辑「${book.title}」`}
+                  onClick={() => setEditing(book)}
                 />
                 <IconButton
                   name="trash"
@@ -205,18 +211,20 @@ export function BooksView({
         title="创建笔记本"
         label="笔记本名称"
         placeholder="例如：读书摘记"
+        secondary={REMARK_FIELD}
         confirmText="创建"
         onSubmit={handleCreate}
         onClose={() => setCreating(false)}
       />
       <PromptDialog
-        open={renaming !== null}
-        title="重命名笔记本"
+        open={editing !== null}
+        title="编辑笔记本"
         label="笔记本名称"
-        initial={renaming?.title ?? ''}
+        initial={editing?.title ?? ''}
+        secondary={{ ...REMARK_FIELD, initial: editing?.remark ?? '' }}
         confirmText="保存"
-        onSubmit={(title) => handleRename(renaming?.id ?? '', title)}
-        onClose={() => setRenaming(null)}
+        onSubmit={(title, remark) => handleUpdate(editing?.id ?? '', title, remark)}
+        onClose={() => setEditing(null)}
       />
     </div>
   );

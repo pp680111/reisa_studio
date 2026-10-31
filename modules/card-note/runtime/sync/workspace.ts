@@ -49,7 +49,7 @@ export interface SyncExportResult {
 }
 
 function bookDocument(
-  book: { id: string; title: string; createdAt: number; updatedAt: number },
+  book: { id: string; title: string; remark: string | null; createdAt: number; updatedAt: number },
   deviceId: string,
 ): SyncDocument {
   return {
@@ -59,7 +59,8 @@ function bookDocument(
     createdAt: book.createdAt,
     updatedAt: book.updatedAt,
     updatedBy: deviceId,
-    fields: { title: book.title },
+    // remark 为 v0.3 可选字段：与 note.comment 一致始终写入（null 或字符串）。
+    fields: { title: book.title, remark: book.remark },
   };
 }
 
@@ -413,6 +414,8 @@ function applyUpserts(
     database.upsertBookRow({
       id: document.id,
       title: document.fields['title'] as string,
+      // 旧格式文档缺 remark 时视为 null。
+      remark: (document.fields['remark'] as string | null) ?? null,
       createdAt: document.createdAt,
       updatedAt: document.updatedAt,
     });
