@@ -509,6 +509,9 @@
   min-width: 0;
 }
 
+/* 吸底保存条：负边距抵消 .card-note-page 的左右 36px / 底部 40px 内边距，
+   使停靠位与吸附位（bottom: 0）重合，滚动到底时页脚不再上浮出 40px 空隙；
+   窄屏内边距变化在下方媒体查询同步调整。 */
 .card-note-editor-footer {
   display: flex;
   align-items: center;
@@ -518,7 +521,8 @@
   position: sticky;
   bottom: 0;
   z-index: 2;
-  padding: 14px 0;
+  margin: 0 -36px -40px;
+  padding: 14px 36px;
   border-top: 1px solid var(--border);
   background: var(--background);
 }
@@ -931,6 +935,12 @@
 @media (max-width: 760px) {
   .card-note-page {
     padding: 24px 18px;
+  }
+
+  /* 与该断点下 .card-note-page 的 18px / 24px 内边距保持抵消 */
+  .card-note-editor-footer {
+    margin: 0 -18px -24px;
+    padding: 14px 18px;
   }
 }
 

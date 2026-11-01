@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { ModuleEventEnvelope } from '@reisa/module-sdk';
 import { Button, EmptyState, Icon, IconButton } from '@reisa/ui';
+import { MODULE_ID, SYNC_EVENTS } from '../contracts.ts';
 import {
   createBook,
   deleteBook,
@@ -26,11 +28,14 @@ const REMARK_FIELD = {
 };
 export function BooksView({
   notify,
+  subscribeModuleEvents,
   onOpenBook,
   onOpenTags,
   onOpenSettings,
 }: {
   notify: (message: string) => void;
+  /** 模块数据变更事件订阅（宿主注入；浏览器预览缺省）。 */
+  subscribeModuleEvents?: (listener: (event: ModuleEventEnvelope) => void) => () => void;
   onOpenBook: (bookId: string) => void;
   onOpenTags: () => void;
   onOpenSettings: () => void;
@@ -55,13 +60,24 @@ export function BooksView({
     [notify],
   );
 
-  // Q5 刷新策略：操作后主动刷新 + 5 秒轮询；轮询承接页面外变更（克隆/同步导入、
-  // 后台自动同步），失败时静默保留当前数据，避免错误提示重复弹出。
+  // Q5 刷新策略：操作后主动刷新 + 同步完成事件即时刷新 + 5 秒轮询兜底。
+  // 事件由 runtime 协调器在同步成功应用远端数据后发出（手动/后台自动/克隆共用
+  // 同一触发点），承接设置面板同步、克隆导入与后台自动同步这类页面外变更；
+  // 轮询兜底承接无桥环境等其余情形，失败时静默保留当前数据，避免错误提示重复弹出。
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => void refresh({ silent: true }), 5000);
     return () => clearInterval(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    if (subscribeModuleEvents === undefined) return;
+    return subscribeModuleEvents((event) => {
+      if (event.moduleId === MODULE_ID && event.type === SYNC_EVENTS.completed) {
+        void refresh({ silent: true });
+      }
+    });
+  }, [subscribeModuleEvents, refresh]);
 
   const handleImport = async () => {
     const path = await pickPath('file', ['json']);

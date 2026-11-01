@@ -5,6 +5,7 @@ import {
   type JsonValue,
   type ModuleActivation,
   type ModuleContext,
+  type ModuleEventEnvelope,
   type ModuleLogger,
   type RuntimeModule,
   type ToolExecutionContext,
@@ -36,6 +37,7 @@ export interface ModuleStatus {
 }
 
 type StateListener = (status: ModuleStatus) => void;
+type EventListener = (event: ModuleEventEnvelope) => void;
 
 function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -87,6 +89,7 @@ export class ModuleHost {
   readonly #activations = new Map<string, ModuleActivation>();
   readonly #controllers = new Map<string, AbortController>();
   readonly #listeners = new Set<StateListener>();
+  readonly #eventListeners = new Set<EventListener>();
   /** 模块在途调用（工具 + 页面）集合：停用等待其清空（架构设计 §10.2）。 */
   readonly #inFlight = new Map<string, Set<Promise<unknown>>>();
 
@@ -98,6 +101,14 @@ export class ModuleHost {
     this.#listeners.add(listener);
     return () => {
       this.#listeners.delete(listener);
+    };
+  }
+
+  /** 订阅模块数据变更事件（模块经 context.events emit，宿主附上来源身份后转发）。 */
+  onModuleEvent(listener: EventListener): () => void {
+    this.#eventListeners.add(listener);
+    return () => {
+      this.#eventListeners.delete(listener);
     };
   }
 
@@ -250,6 +261,9 @@ export class ModuleHost {
         storage: services.storage,
         config: services.config,
         logger: services.logger,
+        events: {
+          emit: (type, payload) => this.#emitEvent(moduleId, type, payload),
+        },
         invoke: (capabilityId, input, invocationContext) =>
           this.invoke(capabilityId, input, invocationContext),
       };
@@ -360,6 +374,20 @@ export class ModuleHost {
         listener(status);
       } catch (error) {
         this.#options.logger?.warn(`状态监听器执行失败：${describeError(error)}`);
+      }
+    }
+  }
+
+  /** 模块数据变更事件扇出：附来源模块身份；监听器异常不阻断其余监听器。 */
+  #emitEvent(moduleId: string, type: string, payload?: JsonValue): void {
+    if (this.#states.get(moduleId) !== 'active') return;
+    const event: ModuleEventEnvelope =
+      payload === undefined ? { moduleId, type } : { moduleId, type, payload };
+    for (const listener of this.#eventListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        this.#options.logger?.warn(`模块事件监听器执行失败：${describeError(error)}`);
       }
     }
   }

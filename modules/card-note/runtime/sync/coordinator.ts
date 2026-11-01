@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ModuleConfigScope } from '@reisa/module-sdk';
+import type { ModuleConfigScope, ModuleEventScope } from '@reisa/module-sdk';
+import { SYNC_EVENTS } from '../../contracts.ts';
 import type { CardNoteDatabase } from '../database.ts';
 import type { AttachmentStore } from '../attachments.ts';
 import { GitClient } from './git-client.ts';
@@ -60,6 +61,8 @@ export class SyncCoordinator {
   readonly #config: ModuleConfigScope;
   readonly #git: GitClient;
   readonly #logger: SyncCoordinatorLogger;
+  /** 数据变更事件出口（可选：单测直构时缺省，仅成功应用远端数据后发出）。 */
+  readonly #events: ModuleEventScope | undefined;
   #running = false;
 
   constructor(input: {
@@ -68,12 +71,14 @@ export class SyncCoordinator {
     config: ModuleConfigScope;
     git: GitClient;
     logger: SyncCoordinatorLogger;
+    events?: ModuleEventScope;
   }) {
     this.#database = input.database;
     this.#attachments = input.attachments;
     this.#config = input.config;
     this.#git = input.git;
     this.#logger = input.logger;
+    this.#events = input.events;
   }
 
   /** 初始化新仓库：空目录 init + 全量快照播种。 */
@@ -123,7 +128,9 @@ export class SyncCoordinator {
       workspacePath: input.workspacePath,
       remoteUrl: input.remoteUrl,
     });
-    await saveSyncLastSyncedHead(this.#config, await this.#git.head(input.workspacePath, signal));
+    const head = await this.#git.head(input.workspacePath, signal);
+    await saveSyncLastSyncedHead(this.#config, head);
+    this.#events?.emit(SYNC_EVENTS.completed, { head });
     this.#logger.info(`克隆并导入完成（文档数=${documents.length}）`);
     return documents.length;
   }
@@ -166,6 +173,8 @@ export class SyncCoordinator {
       }
       const head = await this.#git.head(workspacePath, signal);
       await saveSyncLastSyncedHead(this.#config, head);
+      // 同一触发点覆盖手动/后台自动两条路径：成功后通知页面即时刷新（不再依赖轮询）。
+      this.#events?.emit(SYNC_EVENTS.completed, { head });
       this.#logger.info(
         `同步完成（导出=${exportResult.documentCount}，导入=${imported.documentCount}，提交=${createdCommit}）`,
       );

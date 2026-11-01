@@ -3,6 +3,7 @@
  * 桥仅存在于 Electron 环境；浏览器预览（pnpm dev）下为 undefined，页面退回本地演示模式。
  */
 import type { useEffect, useState } from 'react';
+import type { ModuleEventEnvelope } from '@reisa/module-sdk';
 
 export interface ReisaConversationSummary {
   id: string;
@@ -114,6 +115,12 @@ export interface ReisaModulePageResult<T> {
   error?: { code: string; message: string };
 }
 
+/**
+ * 模块数据变更事件（模块 runtime emit → 宿主推送；如卡片笔记同步完成）。
+ * 载荷类型与 SDK 信封同源（IPC 侧本就是 JSON 值）。
+ */
+export type ReisaModuleEvent = ModuleEventEnvelope;
+
 export interface ReisaBridge {
   platform: string;
   conversation: {
@@ -175,6 +182,10 @@ export interface ReisaBridge {
     ): Promise<ReisaModulePageResult<T>>;
     pickPath(mode: 'directory' | 'file', extensions?: string[]): Promise<string | null>;
     pickSavePath(suggestedName?: string, extensions?: string[]): Promise<string | null>;
+  };
+  /** 模块数据变更事件订阅；返回退订函数。 */
+  moduleEvents: {
+    subscribe(listener: (event: ReisaModuleEvent) => void): () => void;
   };
 }
 

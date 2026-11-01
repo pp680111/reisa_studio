@@ -84,6 +84,20 @@ const api = {
     pickSavePath: (suggestedName?: string, extensions?: string[]) =>
       ipcRenderer.invoke('reisa/module/pickSavePath', { suggestedName, extensions }),
   },
+  // 模块数据变更事件（模块 runtime emit → 宿主推送，架构设计 §10）：
+  // 页面据此即时刷新页面外变更（如卡片笔记同步完成）。
+  moduleEvents: {
+    subscribe: (
+      listener: (event: { moduleId: string; type: string; payload?: unknown }) => void,
+    ) => {
+      const handler = (
+        _event: unknown,
+        payload: { moduleId: string; type: string; payload?: unknown },
+      ) => listener(payload);
+      ipcRenderer.on('reisa/module/event', handler as never);
+      return () => ipcRenderer.removeListener('reisa/module/event', handler as never);
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('reisa', Object.freeze(api));

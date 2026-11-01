@@ -107,6 +107,8 @@ export class CardNoteRuntime implements RuntimeModule {
       config: context.config,
       git: this.#createGitClient?.() ?? new GitClient({ logger }),
       logger,
+      // 同步成功应用远端数据后发 sync_completed 事件：页面订阅即时刷新（手动/后台自动共用此触发点）。
+      events: context.events,
     });
     const scheduler = new SyncScheduler({
       database,

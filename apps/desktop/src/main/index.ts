@@ -121,6 +121,13 @@ function getRuntime(): Promise<RuntimeAssembly> {
         window.webContents.send('reisa/module/state', status);
       }
     });
+    // 模块数据变更事件（如卡片笔记同步完成）推送给 renderer：页面据此即时刷新，
+    // 不再依赖轮询兜底发现页面外变更（架构设计 §10 推送）。
+    runtime.host.onModuleEvent((event) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send('reisa/module/event', event);
+      }
+    });
     return { runtime, store, manager };
   })();
   return runtimePromise;

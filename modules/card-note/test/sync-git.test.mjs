@@ -257,6 +257,13 @@ test('协调器（真实 git）：初始化 → 变更同步推送；另一设�
       }),
     );
     await hostA.activate('card-note');
+    // 同步成功事件（手动 sync_now 与后台自动调度共用协调器同一触发点）
+    const syncEvents = [];
+    const unsubscribeSyncEvents = hostA.onModuleEvent((event) => {
+      if (event.moduleId === 'card-note' && event.type === 'sync_completed') {
+        syncEvents.push(event);
+      }
+    });
     const bookA = await pageServiceA('create_book', { title: '同步书' });
     await pageServiceA('save_note', { bookId: bookA.id, quote: '跨设备正文', comment: null });
 
@@ -275,6 +282,9 @@ test('协调器（真实 git）：初始化 → 变更同步推送；另一设�
     const run = await pageServiceA('sync_now', {});
     assert.equal(run.exportedDocuments, 3); // book + 2 notes（含初始化遗留的同内容变更）
     assert.equal(run.createdCommit, true);
+    // 同步成功后发出数据变更事件（页面据此即时刷新）
+    assert.equal(syncEvents.length, 1, 'sync_now 成功后发出一次 sync_completed');
+    assert.deepEqual(syncEvents[0].payload, { head: run.head });
     const afterSync = await pageServiceA('get_sync_status', {});
     assert.equal(afterSync.pendingChanges, 0);
 
@@ -309,6 +319,9 @@ test('协调器（真实 git）：初始化 → 变更同步推送；另一设�
     // 设备 A 再次同步：拉取 B 无新变更 → 空操作成功
     const run2 = await pageServiceA('sync_now', {});
     assert.equal(run2.exportedDocuments, 0);
+    assert.equal(syncEvents.length, 2, '空操作的同步同样发出 sync_completed（幂等刷新）');
+    assert.deepEqual(syncEvents[1].payload, { head: run2.head });
+    unsubscribeSyncEvents();
   } finally {
     await hostA?.deactivate('card-note').catch(() => {});
     await hostB?.deactivate('card-note').catch(() => {});

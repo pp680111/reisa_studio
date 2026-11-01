@@ -408,3 +408,31 @@ test('全量提供：停用模块后能力集合随之收缩，不做筛选', as
   );
   assert.equal(host.getState('b'), 'disabled', '停用不删除模块登记，可重新激活');
 });
+
+test('模块事件：context.events.emit 附上来源模块身份扇出给订阅者；停用后不再投递', async () => {
+  const host = await makeHost();
+  let contextRef;
+  host.register(makeModule('a', { onActivate: (context) => (contextRef = context) }));
+  const events = [];
+  const unsubscribe = host.onModuleEvent((event) => events.push(event));
+  await host.activate('a');
+
+  contextRef.events.emit('sync_completed', { head: 'abc123' });
+  assert.deepEqual(events, [{ moduleId: 'a', type: 'sync_completed', payload: { head: 'abc123' } }]);
+
+  // 无 payload 时省略字段；异常监听器不阻断其余监听器
+  const errors = [];
+  host.onModuleEvent(() => errors.push('boom'));
+  contextRef.events.emit('changed');
+  assert.deepEqual(events[events.length - 1], { moduleId: 'a', type: 'changed' });
+  assert.deepEqual(errors, ['boom']);
+
+  unsubscribe();
+  await host.deactivate('a');
+  await host.activate('a');
+  contextRef.events.emit('after_deactivate');
+  assert.ok(
+    events.every((event) => event.type !== 'after_deactivate'),
+    '退订后不再接收事件',
+  );
+});

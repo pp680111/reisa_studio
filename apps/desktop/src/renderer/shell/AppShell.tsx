@@ -6,7 +6,7 @@ import {
   createConversation,
   type Conversation,
 } from '../conversation/ConversationView';
-import { getBridge, type ReisaCapability, type ReisaRole } from '../bridge';
+import { getBridge, type ReisaCapability, type ReisaModuleEvent, type ReisaRole } from '../bridge';
 import { AppSidebar } from './AppSidebar';
 import { CapabilityDialog } from './CapabilityDialog';
 import { ModuleManager } from './ModuleManager';
@@ -129,6 +129,30 @@ export function AppShell() {
       }));
     });
   }, [bridge]);
+  // 模块页面的事件订阅注册表：宿主推送的模块数据变更事件扇出给各页面
+  // （如卡片笔记同步完成后即时刷新笔记本列表，架构设计 §10 推送）。
+  const moduleEventListenersRef = useRef(new Set<(event: ReisaModuleEvent) => void>());
+  useEffect(() => {
+    if (!bridge) return;
+    return bridge.moduleEvents.subscribe((event) => {
+      for (const listener of moduleEventListenersRef.current) {
+        try {
+          listener(event);
+        } catch {
+          // 单个页面监听器异常不阻断其余页面
+        }
+      }
+    });
+  }, [bridge]);
+  const subscribeModuleEvents = useCallback(
+    (listener: (event: ReisaModuleEvent) => void) => {
+      moduleEventListenersRef.current.add(listener);
+      return () => {
+        moduleEventListenersRef.current.delete(listener);
+      };
+    },
+    [],
+  );
   const navigate = (nextRoute: string, conversationId?: string) => {
     if (
       nextRoute !== 'conversation' &&
@@ -459,6 +483,7 @@ export function AppShell() {
                     openSettings={() => setSettingsModuleId(module.id)}
                     notify={setNotice}
                     availableModuleIds={enabled}
+                    subscribeModuleEvents={subscribeModuleEvents}
                   />
                 </div>
               )

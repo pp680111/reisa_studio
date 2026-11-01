@@ -46,6 +46,15 @@ export const PAGE_ACTIONS = {
 
 export type PageAction = (typeof PAGE_ACTIONS)[keyof typeof PAGE_ACTIONS];
 
+/**
+ * 数据变更事件（runtime emit → 宿主推送，架构设计 §10）：
+ * 同步成功应用远端数据后发出，页面订阅后即时刷新，不再依赖轮询发现页面外变更。
+ */
+export const SYNC_EVENTS = {
+  /** 一次同步（手动/后台自动/克隆导入）成功写入数据。 */
+  completed: 'sync_completed',
+} as const;
+
 // ---- 页面服务 DTO（ui 与 runtime 共享的真源） ----
 
 /** 受限通道返回封装（宿主 preload 注入的调用结果）。 */
