@@ -133,6 +133,33 @@
   border-color: var(--accent);
 }
 
+/* 笔记列表排序（创建时间升/降序）：紧凑下拉菜单，仅保留右侧原生向下箭头。
+   背景与文字色必须显式声明（不能 transparent）：Chromium 下拉列表跟随
+   select 的计算背景/文字色，显式声明才能让弹出列表与按钮观感一致。 */
+.card-note-sort {
+  width: auto;
+  min-height: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.card-note-page .card-note-sort:focus,
+.card-note-page .card-note-sort:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.card-note-sort option {
+  background-color: var(--surface);
+  color: var(--text);
+  padding: 6px 10px;
+}
+
 /* ---- 列表通用 ---- */
 
 .card-note-book-list,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Dialog, EmptyState, Icon, IconButton, PageHeading, Tabs } from '@reisa/ui';
 import {
   errorMessage,
@@ -22,11 +22,18 @@ interface NoteRow {
 }
 
 const VIEW_MODES = ['列表', '网格'] as const;
+type SortOrder = 'desc' | 'asc';
+/** 创建时间排序选项（runtime 基准为 DESC, id ASC）：默认倒序，稳定排序保留 id ASC 同值次序。 */
+const SORT_OPTIONS: ReadonlyArray<{ value: SortOrder; label: string }> = [
+  { value: 'desc', label: '创建时间倒序' },
+  { value: 'asc', label: '创建时间升序' },
+];
 
 /**
  * 笔记本详情（源 BookDetailPage，FR-08/FR-09/FR-11）：
  * 列表/卡片网格双视图（同一份查询结果；画板视图已随 R3 移除）+
- * 当前笔记本内搜索（250ms 防抖，仅匹配原文与正文，两视图共用）。
+ * 当前笔记本内搜索（250ms 防抖，仅匹配原文与正文，两视图共用）+
+ * 创建时间升/倒序下拉选择（默认倒序；查询为全量返回，展示层排序即可）。
  */
 export function BookDetailView({
   bookId,
@@ -48,6 +55,7 @@ export function BookDetailView({
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [viewMode, setViewMode] = useState<'列表' | '网格'>('列表');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -84,6 +92,17 @@ export function BookDetailView({
     const timer = setInterval(() => void refresh({ silent: true }), 5000);
     return () => clearInterval(timer);
   }, [refresh, refreshToken]);
+
+  // 展示层排序：runtime 已按 created_at DESC, id ASC 返回，此处仅切换方向；
+  // Array.sort 稳定，同 created_at 的行保持 runtime 的 id ASC 次序。
+  const sortedRows = useMemo(() => {
+    if (rows === null) return null;
+    const sorted = [...rows];
+    if (sortOrder === 'asc') {
+      sorted.sort((left, right) => left.note.createdAt - right.note.createdAt);
+    }
+    return sorted;
+  }, [rows, sortOrder]);
 
   const handleExport = async (format: ExportFormatJson) => {
     setExportOpen(false);
@@ -135,9 +154,7 @@ export function BookDetailView({
         </Button>
       </PageHeading>
 
-      {remark !== null && (
-        <p className="card-note-book-remark">{remark}</p>
-      )}
+      {remark !== null && <p className="card-note-book-remark">{remark}</p>}
 
       <div className="card-note-library-tools">
         <span className="card-note-result-count" role="status">
@@ -157,6 +174,18 @@ export function BookDetailView({
             <IconButton name="close" label="清空搜索" onClick={() => setQuery('')} />
           )}
         </div>
+        <select
+          className="card-note-sort"
+          aria-label="按创建时间排序"
+          value={sortOrder}
+          onChange={(event) => setSortOrder(event.target.value === 'asc' ? 'asc' : 'desc')}
+        >
+          {SORT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         <Tabs
           items={VIEW_MODES}
           value={viewMode}
@@ -185,9 +214,9 @@ export function BookDetailView({
         </EmptyState>
       )}
 
-      {rows !== null && rows.length > 0 && viewMode === '列表' && (
+      {sortedRows !== null && sortedRows.length > 0 && viewMode === '列表' && (
         <ul className="card-note-note-list">
-          {rows.map(({ note, tags }) => (
+          {sortedRows.map(({ note, tags }) => (
             <li key={note.id}>
               <button
                 type="button"
@@ -201,9 +230,9 @@ export function BookDetailView({
         </ul>
       )}
 
-      {rows !== null && rows.length > 0 && viewMode === '网格' && (
+      {sortedRows !== null && sortedRows.length > 0 && viewMode === '网格' && (
         <div className="card-note-grid">
-          {rows.map(({ note, tags }) => (
+          {sortedRows.map(({ note, tags }) => (
             <button
               key={note.id}
               type="button"
