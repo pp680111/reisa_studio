@@ -1,10 +1,22 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage } from 'electron';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { testModelConnection } from '@reisa/agent-adapter';
+import {
+  clearDataRootPointer,
+  defaultAppDataRoot,
+  migrateAppData,
+  resolveAppDataRoot,
+  validateMigrationTarget,
+  writeDataRootPointer,
+} from '../composition/data-directory.ts';
 import { createAppRuntime, getModulePageService, type AppRuntime } from '../composition/runtime.ts';
 import { nextEnabledModules } from './enabled-modules.ts';
 import { ConversationManager, type IncomingAttachment } from './conversation-manager.ts';
-import { ConversationStore, type CreateRoleInput, type UpdateRoleInput } from './conversations/store.ts';
+import {
+  ConversationStore,
+  type CreateRoleInput,
+  type UpdateRoleInput,
+} from './conversations/store.ts';
 import { DEFAULT_ROLE_SEEDS } from './roles/seed.ts';
 import { resolveConversationSystemPrompt } from './roles/resolution.ts';
 import { runSmoke } from './smoke.ts';
@@ -88,8 +100,20 @@ interface RuntimeAssembly {
 }
 
 // 运行层按需初始化：首次业务 IPC 调用时装配，不影响窗口启动路径。
+// 数据迁移前须整体停摆（停用模块 + 关闭会话库）；停摆期间与迁移完成后拒绝新业务
+// IPC 复用已关闭的库，错误文案区分"迁移进行中"与"已迁移待重启"两种状态。
+let runtimeShutdown: 'open' | 'migrating' | 'migrated' = 'open';
 let runtimePromise: Promise<RuntimeAssembly> | undefined;
 function getRuntime(): Promise<RuntimeAssembly> {
+  if (runtimeShutdown !== 'open') {
+    return Promise.reject(
+      new Error(
+        runtimeShutdown === 'migrating'
+          ? '数据迁移进行中，请稍候'
+          : '数据目录已迁移，请重启应用后继续使用',
+      ),
+    );
+  }
   runtimePromise ??= (async () => {
     const runtime = await createAppRuntime(app.getPath('userData'));
     const store = await ConversationStore.open(runtime.layout.conversationsDb);
@@ -133,6 +157,29 @@ function getRuntime(): Promise<RuntimeAssembly> {
   return runtimePromise;
 }
 
+/**
+ * 数据迁移前的整体停摆：逐个停用模块（各模块 deactivate 自行关闭其 SQLite/LanceDB
+ * 连接，knowledge 的 WAL 在此 checkpoint）→ 关闭主会话库。之后才允许复制目录。
+ */
+async function shutdownRuntime(): Promise<void> {
+  if (runtimeShutdown !== 'open' || runtimePromise === undefined) return; // 运行层尚未装配：无库可关
+  runtimeShutdown = 'migrating';
+  const { runtime, store } = await runtimePromise;
+  for (const module of runtime.host.listModules()) {
+    const state = runtime.host.getState(module.id);
+    if (state !== 'active' && state !== 'failed') continue;
+    try {
+      await runtime.host.deactivate(module.id);
+    } catch (error) {
+      // 单个模块停用失败不阻断迁移（其库文件可能仍被占用，复制校验阶段兜底发现）
+      console.error(
+        `[data-directory] 模块 ${module.id} 停用失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  store.close();
+}
+
 function registerIpc(): void {
   ipcMain.handle(
     'reisa/conversations/list',
@@ -144,10 +191,8 @@ function registerIpc(): void {
       );
     },
   );
-  ipcMain.handle(
-    'reisa/conversations/create',
-    async (_event, title?: string, roleId?: string) =>
-      (await getRuntime()).store.createConversation(title, roleId),
+  ipcMain.handle('reisa/conversations/create', async (_event, title?: string, roleId?: string) =>
+    (await getRuntime()).store.createConversation(title, roleId),
   );
   ipcMain.handle(
     'reisa/conversations/rename',
@@ -173,10 +218,8 @@ function registerIpc(): void {
   ipcMain.handle('reisa/roles/create', async (_event, input: CreateRoleInput) =>
     (await getRuntime()).store.createRole(input),
   );
-  ipcMain.handle(
-    'reisa/roles/update',
-    async (_event, payload: { id: string } & UpdateRoleInput) =>
-      (await getRuntime()).store.updateRole(payload.id, payload),
+  ipcMain.handle('reisa/roles/update', async (_event, payload: { id: string } & UpdateRoleInput) =>
+    (await getRuntime()).store.updateRole(payload.id, payload),
   );
   ipcMain.handle('reisa/roles/delete', async (_event, roleId: string) => {
     (await getRuntime()).store.deleteRole(roleId);
@@ -280,6 +323,48 @@ function registerIpc(): void {
   ipcMain.handle('reisa/settings/setPrompt', async (_event, prompt: string) => {
     (await getRuntime()).runtime.config.set('agent.systemPrompt', prompt);
     return true;
+  });
+
+  // 数据目录（架构设计 §7.2 存储根可配置）：展示当前根、选择目录、迁移。
+  ipcMain.handle('reisa/settings/getDataDirectory', async () => {
+    const { runtime } = await getRuntime();
+    const defaultRoot = defaultAppDataRoot(app.getPath('userData'));
+    const root = runtime.layout.root;
+    return { root, defaultRoot, isCustom: resolve(root) !== resolve(defaultRoot) };
+  });
+  ipcMain.handle('reisa/settings/pickDataDirectory', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0] ?? null;
+  });
+  ipcMain.handle('reisa/settings/migrateDataDirectory', async (_event, target: string) => {
+    const userDataPath = app.getPath('userData');
+    const defaultRoot = defaultAppDataRoot(userDataPath);
+    const sourceRoot = await resolveAppDataRoot(userDataPath);
+    const targetRoot = resolve(target);
+    // 先校验再动运行层：校验失败时应用不受任何影响
+    await validateMigrationTarget(sourceRoot, targetRoot, { defaultRoot });
+    const restoreDefault = targetRoot === resolve(defaultRoot);
+    await shutdownRuntime();
+    try {
+      const stats = await migrateAppData({ sourceRoot, targetRoot });
+      // 指针在数据就位后才写入：任一步失败都保持旧目录生效
+      if (restoreDefault) await clearDataRootPointer(userDataPath);
+      else await writeDataRootPointer(userDataPath, targetRoot);
+      // 迁移成功后运行层不再复用：重启后从新目录重新装配
+      runtimeShutdown = 'migrated';
+      return stats;
+    } catch (error) {
+      // 迁移失败：指针未写、源目录未动；重置装配状态，下次 IPC 请求按原目录重建
+      runtimeShutdown = 'open';
+      runtimePromise = undefined;
+      throw error;
+    }
+  });
+  // 应用重启（迁移完成后由 renderer 触发）：relaunch 按原参数拉起新实例，本进程立即退出
+  ipcMain.handle('reisa/app/restart', () => {
+    app.relaunch();
+    app.exit(0);
   });
 
   // 模块页面服务（迁移设计文档 §8.1）：受限通道，仅允许调用已激活模块声明的页面操作；

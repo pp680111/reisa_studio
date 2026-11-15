@@ -90,6 +90,19 @@ export interface ReisaConnectionTest {
   error?: string;
 }
 
+/** 数据目录状态：root 为当前生效的数据根；isCustom 表示是否已脱离默认位置。 */
+export interface ReisaDataDirectory {
+  root: string;
+  defaultRoot: string;
+  isCustom: boolean;
+}
+
+/** 数据迁移统计：复制的文件数与总字节数。 */
+export interface ReisaMigrationStats {
+  files: number;
+  bytes: number;
+}
+
 export interface ReisaAttachmentInput {
   name: string;
   mediaType?: string;
@@ -166,6 +179,12 @@ export interface ReisaBridge {
     testConnection(): Promise<ReisaConnectionTest>;
     getPrompt(): Promise<string>;
     setPrompt(prompt: string): Promise<boolean>;
+    /** 当前数据目录状态（指针解析结果）。 */
+    getDataDirectory(): Promise<ReisaDataDirectory>;
+    /** 打开系统目录选择对话框；取消返回 null。 */
+    pickDataDirectory(): Promise<string | null>;
+    /** 迁移数据到目标目录（须为空目录）：停运运行层 → 复制校验 → 写指针；完成后需重启。 */
+    migrateDataDirectory(target: string): Promise<ReisaMigrationStats>;
   };
   roles: {
     list(): Promise<ReisaRole[]>;
@@ -182,6 +201,10 @@ export interface ReisaBridge {
     ): Promise<ReisaModulePageResult<T>>;
     pickPath(mode: 'directory' | 'file', extensions?: string[]): Promise<string | null>;
     pickSavePath(suggestedName?: string, extensions?: string[]): Promise<string | null>;
+  };
+  /** 应用级操作（受限）：目前仅数据迁移完成后的重启入口。 */
+  app: {
+    restart(): Promise<void>;
   };
   /** 模块数据变更事件订阅；返回退订函数。 */
   moduleEvents: {

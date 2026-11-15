@@ -55,6 +55,10 @@ const api = {
     testConnection: () => ipcRenderer.invoke('reisa/settings/testConnection'),
     getPrompt: () => ipcRenderer.invoke('reisa/settings/getPrompt'),
     setPrompt: (prompt: string) => ipcRenderer.invoke('reisa/settings/setPrompt', prompt),
+    getDataDirectory: () => ipcRenderer.invoke('reisa/settings/getDataDirectory'),
+    pickDataDirectory: () => ipcRenderer.invoke('reisa/settings/pickDataDirectory'),
+    migrateDataDirectory: (target: string) =>
+      ipcRenderer.invoke('reisa/settings/migrateDataDirectory', target),
   },
   // 角色管理（会话级 prompt 方案）：新建会话时选定，创建后不可切换
   roles: {
@@ -83,6 +87,10 @@ const api = {
       ipcRenderer.invoke('reisa/module/pickPath', { mode, extensions }),
     pickSavePath: (suggestedName?: string, extensions?: string[]) =>
       ipcRenderer.invoke('reisa/module/pickSavePath', { suggestedName, extensions }),
+  },
+  // 应用级操作（受限）：目前仅数据迁移完成后的重启入口
+  app: {
+    restart: () => ipcRenderer.invoke('reisa/app/restart'),
   },
   // 模块数据变更事件（模块 runtime emit → 宿主推送，架构设计 §10）：
   // 页面据此即时刷新页面外变更（如卡片笔记同步完成）。

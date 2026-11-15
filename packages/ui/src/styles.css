@@ -2060,6 +2060,16 @@ blockquote {
   color: var(--faint);
   font-size: 12px;
 }
+/* 数据目录设置：路径展示行（输入 + 更改按钮）与迁移对话框中的路径段落。 */
+.settings-path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.settings-migrate-path {
+  word-break: break-all;
+}
 .capability-dialog {
   padding: 22px 24px;
 }

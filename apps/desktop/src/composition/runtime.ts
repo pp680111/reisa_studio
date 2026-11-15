@@ -10,6 +10,7 @@ import {
   type ConfigService,
   type CredentialStore,
 } from '@reisa/foundation';
+import { resolveAppDataRoot } from './data-directory.ts';
 import { ModuleHost } from '@reisa/module-host';
 import { createOpenAICompatibleModel, type ProviderConnectionConfig } from '@reisa/agent-adapter';
 import type { JsonValue } from '@reisa/module-sdk';
@@ -129,7 +130,8 @@ interface ModelConnectionSettings {
 }
 
 export async function createAppRuntime(userDataPath: string): Promise<AppRuntime> {
-  const layout = appDataLayout(join(userDataPath, 'app-data'));
+  // 数据根可配置：指针优先，回落 userData/app-data（架构设计 §7.2）
+  const layout = appDataLayout(await resolveAppDataRoot(userDataPath));
   const config = await createFileConfigService(join(layout.foundationDir, 'settings.json'));
   const credentials = createFileCredentialStore(
     join(layout.foundationDir, 'credentials.json'),

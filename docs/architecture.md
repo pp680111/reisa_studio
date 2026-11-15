@@ -244,6 +244,14 @@ app-data/
 
 基础存储服务可以管理连接、目录创建、备份机制，但传给业务代码的句柄必须作用域化。不提供跨模块 `getDatabase(moduleId)`、全局文件枚举或私有配置查询接口。
 
+#### 7.2.1 数据根可配置（设置 › 基础配置 › 数据目录）
+
+存储根支持用户自定义，机制（实现：`apps/desktop/src/composition/data-directory.ts`）：
+
+- **指针文件**：默认 Electron userData（永不迁移）下的 `data-root.json`，内容 `{ version: 1, appDataRoot }`。启动装配时经 `resolveAppDataRoot` 解析——指针缺失、损坏或指向目录不存在时回落默认位置（`<userData>/app-data`）并告警。指针只指向 `app-data` 一层；Electron 自身缓存（Cache、Local Storage 等）始终留在默认 userData。
+- **迁移流程**：校验目标（须为空目录、不得与源互相嵌套）→ 停摆运行层（逐个停用模块关闭其库 + 关闭主会话库，knowledge 的 WAL 在此 checkpoint）→ 全量复制 → 改写库内嵌的旧数据根绝对路径（`conversations.sqlite` 的 `attachments.path`、knowledge `data.sqlite` 的 `sources.path`，仅限以旧根为前缀的行）→ 校验（`PRAGMA integrity_check` + 文件数/字节数对账）→ 原子写指针 → 引导重启。恢复默认位置时清除指针而非写入。
+- **失败语义**：任一步失败即清空目标目录回滚并上抛；指针未写、源目录未动，应用可在原目录继续运行。迁移成功后旧目录保留为备份，不自动删除。
+
 ### 7.3 数据通过能力返回
 
 小数据可以直接返回结构化结果。大文件、图片和音频可以返回所属模块的资源引用：
