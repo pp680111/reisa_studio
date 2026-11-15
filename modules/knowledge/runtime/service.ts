@@ -123,7 +123,8 @@ export class KnowledgeBase {
     let queryVector: number[] | null = null;
     if (this.#embedder !== null) {
       try {
-        const batch = await this.#embedder.embed([query], signal);
+        // 检索向量化不携带 context：接口级调用记录器对无上下文请求自动跳过
+        const batch = await this.#embedder.embed([query], { signal });
         queryVector = batch.vectors[0] ?? null;
       } catch (error) {
         // 取消优先于降级：已中止的检索不再转为全文降级结果（架构设计 §10.3）。

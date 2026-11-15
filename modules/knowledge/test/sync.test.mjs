@@ -14,7 +14,9 @@ import { ChunkStore } from '../runtime/store.ts';
 import { SyncService, safeMessage } from '../runtime/sync.ts';
 import { KnowledgeBase, ServiceError, uploadsPathFor } from '../runtime/service.ts';
 import { embeddingIdentity, DEFAULT_SETTINGS } from '../runtime/config.ts';
-import { createFakeEmbedder, fakeVector } from './fake-embedder.mjs';
+import { EmbeddingCallRecorder } from '../runtime/embedding-call-log.ts';
+import { EmbeddingError } from '../runtime/embedding.ts';
+import { createFakeEmbedder, fakeVector, createStubEmbedder } from './fake-embedder.mjs';
 
 const DIM = 16;
 
@@ -709,4 +711,75 @@ test('未配置 uploadMaxBytes 时使用默认上限，小文件上传不受影�
     '默认上限保持 25 MiB（设置页展示口径）',
   );
   await stack.cleanup();
+});
+
+test('sync 透传文档上下文：embed 调用携带 documentId/relPath/chunk 明细（接口级记录的数据来源）', async () => {
+  const stack = await makeStack();
+  const docs = await mkdtemp(join(tmpdir(), 'kb-ctx-docs-'));
+  try {
+    await writeDoc(docs, 'a.md', '# 标题\n\n需要被索引的正文内容。');
+    await stack.service.addSource({ path: docs });
+
+    /** 捕获 embed 收到的调用参数（新 Embedder 契约：embed(texts, options)）。 */
+    const seen = [];
+    const capturing = createStubEmbedder({
+      embed: async (texts, options) => {
+        seen.push({ texts: [...texts], options });
+        return { vectors: texts.map((text) => fakeVector(text, DIM)), promptTokens: null };
+      },
+    });
+    const capturingSync = new SyncService({
+      database: stack.database,
+      store: stack.store,
+      embedder: capturing,
+      intervalSeconds: 30,
+      debounceSeconds: 0,
+    });
+    await capturingSync.reconcileAll();
+
+    const document = stack.service.listDocuments().items[0];
+    assert.equal(document?.status, 'indexed');
+    assert.equal(seen.length, 1, '一个文档一次 embed 调用');
+    const context = seen[0]?.options?.context;
+    assert.equal(context?.documentId, document.id);
+    assert.equal(context?.relPath, 'a.md');
+    assert.equal(context?.documentName, 'a.md');
+    assert.equal(context?.items?.length, seen[0]?.texts?.length, 'items 与 texts 等长对齐');
+    assert.equal(context?.items?.[0]?.chunkId !== undefined, true);
+  } finally {
+    await stack.cleanup();
+    await rm(docs, { recursive: true, force: true });
+  }
+});
+
+test('embed 失败路径不变：documents 记为 error，重试计数推进（记录职责已移至 client 层）', async () => {
+  const stack = await makeStack();
+  const docs = await mkdtemp(join(tmpdir(), 'kb-fail-docs-'));
+  try {
+    await writeDoc(docs, 'a.md', '# 标题\n\n需要被索引的正文内容。');
+    await stack.service.addSource({ path: docs });
+
+    const failing = createStubEmbedder({
+      embed: async () => {
+        throw new EmbeddingError('Embedding request failed (status=429, code=rate_limited)', {
+          code: 'rate_limited',
+          retryable: true,
+          statusCode: 429,
+        });
+      },
+    });
+    const failingSync = new SyncService({
+      database: stack.database,
+      store: stack.store,
+      embedder: failing,
+      intervalSeconds: 30,
+      debounceSeconds: 0,
+    });
+    await failingSync.reconcileAll();
+    assert.equal(stack.service.listDocuments().items[0]?.status, 'error');
+    assert.equal(stack.service.listDocuments().items[0]?.retryCount, 1);
+  } finally {
+    await stack.cleanup();
+    await rm(docs, { recursive: true, force: true });
+  }
 });

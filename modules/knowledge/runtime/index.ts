@@ -17,8 +17,16 @@ import {
   knowledgeUploadDocument,
   type SearchModeValue,
 } from '../contracts.ts';
-import { EMBEDDING_IDENTITY_KEY, MetadataDB, type Document, type Source } from './db.ts';
+import {
+  EMBEDDING_IDENTITY_KEY,
+  MetadataDB,
+  type Document,
+  type EmbeddingCall,
+  type EmbeddingCallItem,
+  type Source,
+} from './db.ts';
 import { EmbeddingError, OpenAICompatibleEmbeddingClient, type Embedder } from './embedding.ts';
+import { EmbeddingCallRecorder, embeddingCallCutoffIso } from './embedding-call-log.ts';
 import { SyncService, safeMessage, type SyncStatus } from './sync.ts';
 import { KnowledgeBase, ServiceError, uploadsPathFor } from './service.ts';
 import { ChunkStore, type SearchMode } from './store.ts';
@@ -145,14 +153,39 @@ export class KnowledgeRuntime implements RuntimeModule {
             from: stored ?? null,
             to: identity,
           } as JsonValue);
-          await rm(indexDir, { recursive: true, force: true });
-          database.deleteAllDocuments();
         }
+        // 指纹变更即重建索引目录：首次配置（尚无文档）也可能已有按默认维度建出的
+        // 空索引目录，不清理会因维度不符导致重配置失败（回归：调用记录 e2e 用例）
+        await rm(indexDir, { recursive: true, force: true });
+        database.deleteAllDocuments();
         database.setSetting(EMBEDDING_IDENTITY_KEY, identity);
+      }
+
+      // 调用记录保留期清理（设计文档 §7.2）：与开关无关、database 建好后一律执行一次；
+      // best-effort——清理失败无权进入 #buildServices 的失败路径（重配置失败须保留旧服务）
+      const callLogCutoff = embeddingCallCutoffIso(settings.embeddingCallLog.retentionDays);
+      if (callLogCutoff !== null) {
+        try {
+          database.deleteEmbeddingCallsBefore(callLogCutoff);
+        } catch (error) {
+          context.logger.warn('embedding_call_log_prune_failed', {
+            message: safeMessage(error),
+          } as JsonValue);
+        }
       }
 
       store = await this.#openChunkStore(indexDir, settings.embedding.dimensions);
       const status = embedderStatus(settings.embedding);
+      // 接口级调用记录器：作为 client 的 onRequest 钩子，每次真实请求（含重试）落库；
+      // 仅记录索引调用（sync 透传文档上下文，检索/连接测试无上下文自动跳过）
+      const callRecorder =
+        settings.embeddingCallLog.enabled && status.enabled
+          ? new EmbeddingCallRecorder({
+              database,
+              retentionDays: settings.embeddingCallLog.retentionDays,
+              logger: context.logger,
+            })
+          : undefined;
       const embedder: Embedder | null = status.enabled
         ? new OpenAICompatibleEmbeddingClient({
             apiKey: settings.embedding.apiKey,
@@ -164,6 +197,7 @@ export class KnowledgeRuntime implements RuntimeModule {
             timeoutSeconds: settings.embedding.timeoutSeconds,
             maxRetries: settings.embedding.maxRetries,
             rateLimitRetryDelaySeconds: settings.embedding.rateLimitRetryDelaySeconds,
+            onRequest: callRecorder ? (event) => callRecorder.recordRequest(event) : undefined,
           })
         : null;
       if (!status.enabled) {
@@ -394,7 +428,7 @@ export class KnowledgeRuntime implements RuntimeModule {
       // 其余页面动作与工具调用、重新配置共享模块锁：动作期间服务不会被切换或关闭
       return this.#mutex.run(async () => {
         const signal = context?.signal;
-        const { service, sync } = this.#require();
+        const { service, sync, database } = this.#require();
         const payload = (input ?? {}) as Record<string, unknown>;
         switch (action) {
           case 'get_stats': {
@@ -497,6 +531,28 @@ export class KnowledgeRuntime implements RuntimeModule {
               status: 'queued',
             } as unknown as JsonValue;
           }
+          case 'list_embedding_calls': {
+            const { items, total } = database.listEmbeddingCalls({
+              ...(payload['status'] !== undefined && payload['status'] !== ''
+                ? { status: String(payload['status']) }
+                : {}),
+              ...(payload['limit'] !== undefined ? { limit: Number(payload['limit']) } : {}),
+              ...(payload['offset'] !== undefined ? { offset: Number(payload['offset']) } : {}),
+            });
+            return { total, items: items.map(toEmbeddingCallJson) } as unknown as JsonValue;
+          }
+          case 'get_embedding_call': {
+            const found = database.getEmbeddingCall(String(payload['callId'] ?? ''));
+            if (found === undefined) throw new Error('调用记录不存在');
+            return {
+              call: toEmbeddingCallJson(found.call),
+              items: found.items.map(toEmbeddingCallItemJson),
+            } as unknown as JsonValue;
+          }
+          case 'clear_embedding_calls': {
+            database.clearEmbeddingCalls();
+            return { cleared: true } as unknown as JsonValue;
+          }
           case 'get_config':
             return this.#require().settings as unknown as JsonValue;
           case 'update_config': {
@@ -558,7 +614,7 @@ export class KnowledgeRuntime implements RuntimeModule {
     });
     const startedAt = Date.now();
     try {
-      await client.embed(['连接测试'], signal);
+      await client.embed(['连接测试'], { signal });
       return {
         ok: true,
         model: target.model,
@@ -613,6 +669,40 @@ function toSourceJson(source: Source): JsonValue {
     name: source.name,
     createdAt: source.createdAt,
     ignoreRules: source.ignoreRules,
+  } as unknown as JsonValue;
+}
+
+function toEmbeddingCallJson(call: EmbeddingCall): JsonValue {
+  return {
+    id: call.id,
+    triggeredAt: call.triggeredAt,
+    status: call.status,
+    model: call.model,
+    roundId: call.roundId,
+    batchIndex: call.batchIndex,
+    attempt: call.attempt,
+    textCount: call.textCount,
+    tokenCount: call.tokenCount,
+    durationMs: call.durationMs,
+    errorCode: call.errorCode,
+    errorMessage: call.errorMessage,
+    documentId: call.documentId,
+    relPath: call.relPath,
+    documentName: call.documentName,
+  } as unknown as JsonValue;
+}
+
+function toEmbeddingCallItemJson(item: EmbeddingCallItem): JsonValue {
+  return {
+    textIndex: item.textIndex,
+    chunkId: item.chunkId,
+    ordinal: item.ordinal,
+    contentHash: item.contentHash,
+    contentPreview: item.contentPreview,
+    tokenCount: item.tokenCount,
+    sectionPath: item.sectionPath,
+    lineStart: item.lineStart,
+    lineEnd: item.lineEnd,
   } as unknown as JsonValue;
 }
 

@@ -204,7 +204,7 @@ test('取消信号：已中止的调用不发起 SDK 请求', async () => {
   const { embedder, client } = makeClient([]);
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(() => embedder.embed(['x'], controller.signal));
+  await assert.rejects(() => embedder.embed(['x'], { signal: controller.signal }));
   assert.equal(client.attempts.length, 0, '已取消的调用不产生任何请求（无副作用）');
 });
 
@@ -223,7 +223,7 @@ test('取消信号：退避等待期间中止立即停止重试，SDK 请求透�
     { sleep: abortableSleep },
   );
   const controller = new AbortController();
-  const embedding = embedder.embed(['x'], controller.signal);
+  const embedding = embedder.embed(['x'], { signal: controller.signal });
 
   // 第一发已发出且进入 429 退避
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -234,4 +234,93 @@ test('取消信号：退避等待期间中止立即停止重试，SDK 请求透�
   controller.abort();
   await assert.rejects(() => embedding);
   assert.equal(client.attempts.length, 1, '中止后不再发起重试请求');
+});
+
+// ---- 接口级调用遥测（onRequest；设计文档 knowledge-embedding-call-log.md）----
+
+test('onRequest：批次拆分逐请求发出，items 随批次切片对齐', async () => {
+  const events = [];
+  const { embedder } = makeClient([], {
+    onRequest: (event) => events.push(event),
+    batchSize: 2,
+  });
+  const items = Array.from({ length: 3 }, (_, i) => ({ chunkId: `c${i}`, ordinal: i }));
+  await embedder.embed(['t0', 't1', 't2'], {
+    context: { documentId: 'doc-1', relPath: 'a.md', documentName: 'a.md', items },
+  });
+  assert.equal(events.length, 2, '3 条文本按 batchSize=2 拆两批');
+  assert.equal(new Set(events.map((event) => event.roundId)).size, 1, '同一轮共享 roundId');
+  assert.deepEqual(
+    events.map((event) => event.batchIndex),
+    [0, 1],
+  );
+  assert.deepEqual(events[0].texts, ['t0', 't1']);
+  assert.deepEqual(events[1].texts, ['t2']);
+  assert.deepEqual(events[0].items, [items[0], items[1]]);
+  assert.deepEqual(events[1].items, [items[2]]);
+  assert.equal(events[0].attempt, 0);
+  assert.equal(events[0].status, 'success');
+  assert.equal(events[0].tokenCount, 6);
+  assert.equal(events[0].errorCode, null);
+  assert.equal(events[0].model, 'm');
+});
+
+test('onRequest：context.items 与 texts 长度不符直接报错', async () => {
+  const { embedder } = makeClient([], { batchSize: 2 });
+  await assert.rejects(() =>
+    embedder.embed(['t0', 't1'], { context: { documentId: 'd', items: [{ chunkId: 'x' }] } }),
+  );
+});
+
+test('onRequest：每次重试独立成事件（failed 后 success），错误取分类文案', async () => {
+  const events = [];
+  const rateLimited = Object.assign(new Error('too many'), { status: 429 });
+  const { embedder } = makeClient([rateLimited, fakeResponse(['x'])], {
+    onRequest: (event) => events.push(event),
+  });
+  const batch = await embedder.embed(['x'], {
+    context: { documentId: 'd', items: [{ chunkId: 'c' }] },
+  });
+  assert.equal(batch.vectors.length, 1);
+  assert.equal(events.length, 2, '一次失败尝试 + 一次成功尝试');
+  assert.deepEqual(
+    events.map((event) => event.attempt),
+    [0, 1],
+  );
+  assert.equal(events[0].status, 'failed');
+  assert.equal(events[0].errorCode, 'rate_limited');
+  assert.match(events[0].errorMessage ?? '', /429/);
+  assert.equal(events[0].tokenCount, null);
+  assert.equal(events[1].status, 'success');
+  assert.equal(events[1].tokenCount, 3);
+});
+
+test('onRequest：无 context（如检索）也发出事件，由记录器按上下文过滤', async () => {
+  const events = [];
+  const { embedder } = makeClient([], { onRequest: (event) => events.push(event) });
+  await embedder.embed(['query']);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].items, undefined);
+  assert.equal(events[0].context, undefined);
+});
+
+test('onRequest：重试耗尽时每次失败尝试都有事件，最终仍抛出', async () => {
+  const events = [];
+  const serverError = Object.assign(new Error('boom'), { status: 503 });
+  const { embedder, sleep } = makeClient([serverError], {
+    maxRetries: 2,
+    onRequest: (event) => events.push(event),
+  });
+  await assert.rejects(() => embedder.embed(['x']));
+  assert.equal(events.length, 3, '尝试 0/1/2 全部失败');
+  assert.deepEqual(
+    events.map((event) => event.attempt),
+    [0, 1, 2],
+  );
+  assert.ok(
+    events.every(
+      (event) => event.status === 'failed' && event.errorCode === 'provider_unavailable',
+    ),
+  );
+  assert.equal(sleep.sleeps.length, 2, '重试退避两次，最终失败不再等待');
 });

@@ -550,3 +550,136 @@ test('uploadMaxBytes 重配置后生效：页面上传与 Agent 工具两条入�
     await cleanup();
   }
 });
+
+test('页面服务：embedding 调用记录（索引产生记录、明细、开关关闭停记录、配置变更不重建、清空）', async () => {
+  const { pageService, cleanup } = await makeHost();
+  let server;
+  try {
+    const service = pageService();
+
+    // 本地假 OpenAI 兼容 embeddings 服务：任意输入返回 4 维向量，usage 按 3 token/条计
+    server = createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk) => {
+        body += chunk;
+      });
+      request.on('end', () => {
+        const parsed = JSON.parse(body);
+        response.setHeader('content-type', 'application/json');
+        response.end(
+          JSON.stringify({
+            data: (parsed.input ?? []).map((text, index) => ({ index, embedding: [1, 2, 3, 4] })),
+            usage: { prompt_tokens: 3 * (parsed.input ?? []).length },
+          }),
+        );
+      });
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
+
+    // 配置 embedding（指纹变更触发重建，此时库为空）后上传文档，等待索引完成
+    const config = await service('get_config', {});
+    await service('update_config', {
+      settings: {
+        ...config,
+        embedding: {
+          ...config.embedding,
+          baseUrl,
+          apiKey: 'sk-good',
+          model: 'fake-embedding',
+          dimensions: 4,
+          batchSize: 1,
+        },
+      },
+    });
+    await service('upload_file', {
+      filename: 'calls.md',
+      content: '# 标题\n\n第一段内容，用于成功调用的记录。\n\n## 小节\n\n第二段内容。',
+    });
+    assert.ok(
+      await waitFor(async () => {
+        const listed = await service('list_documents', {});
+        return listed.items[0]?.status === 'indexed';
+      }),
+      '配置 embedding 后文档应被索引',
+    );
+
+    // 记录粒度 = 接口请求：batchSize=1 → 每个 chunk 一次独立请求，各一行
+    const calls = await service('list_embedding_calls', {});
+    const documents = await service('list_documents', {});
+    assert.equal(calls.total, documents.items[0]?.chunkCount, '每个 chunk 产生一条请求记录');
+    assert.ok(calls.items.every((call) => call.status === 'success'));
+    assert.ok(calls.items.every((call) => call.model === 'fake-embedding'));
+    assert.ok(calls.items.every((call) => call.documentName === 'calls.md'));
+    assert.ok(
+      calls.items.every((call) => call.tokenCount === 3 * call.textCount),
+      'usage 按请求文本数汇总',
+    );
+    assert.ok(calls.items.every((call) => call.attempt === 0 && call.batchIndex >= 0));
+    assert.equal(
+      new Set(calls.items.map((call) => call.roundId)).size,
+      1,
+      '同一轮索引的请求共享 roundId',
+    );
+    assert.deepEqual(
+      calls.items.map((call) => call.batchIndex).sort((a, b) => a - b),
+      calls.items.map((_, index) => index),
+      'batchIndex 覆盖 0..n-1',
+    );
+
+    // 明细：单文本请求的 chunk 明细与预览、行区间
+    const call = calls.items[0];
+    const detail = await service('get_embedding_call', { callId: call.id });
+    assert.equal(detail.call.id, call.id);
+    assert.equal(detail.items.length, call.textCount);
+    assert.ok(detail.items[0]?.contentPreview);
+    assert.ok((detail.items[0]?.lineStart ?? 0) >= 1);
+
+    // 开关关闭：已有记录保留，新索引不再记录
+    const current = await service('get_config', {});
+    await service('update_config', {
+      settings: {
+        ...current,
+        embeddingCallLog: { ...current.embeddingCallLog, enabled: false },
+      },
+    });
+    await service('upload_file', {
+      filename: 'quiet.md',
+      content: '# 另一篇\n\n关闭记录之后上传的内容。',
+    });
+    assert.ok(
+      await waitFor(async () => {
+        const listed = await service('list_documents', {});
+        return listed.total === 2 && listed.items.every((item) => item.status === 'indexed');
+      }),
+      '关闭记录后文档仍应正常索引',
+    );
+    assert.equal(
+      (await service('list_embedding_calls', {})).total,
+      calls.total,
+      '关闭后不产生新记录，旧记录保留',
+    );
+
+    // 只改调用记录设置不进入 embedding 指纹：文档不清空重建
+    const withLog = await service('get_config', {});
+    await service('update_config', {
+      settings: {
+        ...withLog,
+        embeddingCallLog: { ...withLog.embeddingCallLog, retentionDays: 7 },
+      },
+    });
+    assert.equal(
+      (await service('list_documents', {})).total,
+      2,
+      'embeddingCallLog 变更不触发索引重建',
+    );
+
+    // 清空
+    assert.deepEqual(await service('clear_embedding_calls', {}), { cleared: true });
+    assert.equal((await service('list_embedding_calls', {})).total, 0);
+  } finally {
+    server?.closeAllConnections();
+    await new Promise((resolve) => server?.close(resolve));
+    await cleanup();
+  }
+});

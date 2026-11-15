@@ -35,8 +35,68 @@ export interface EmbeddingBatch {
   readonly promptTokens: number | null;
 }
 
+/** 与 texts 一一对齐的文本来源明细（索引场景 = chunk 元数据），随调用透传至遥测。 */
+export interface EmbedTextItem {
+  readonly chunkId?: string;
+  readonly ordinal?: number;
+  readonly contentHash?: string;
+  readonly tokenCount?: number;
+  readonly sectionPath?: string | null;
+  readonly lineStart?: number;
+  readonly lineEnd?: number;
+}
+
+/** 一次 embed 调用的来源上下文：由调用点填写，随每次接口请求进入遥测。 */
+export interface EmbeddingCallContext {
+  /** 索引场景的文档身份；缺失时调用记录器跳过该请求（仅记录索引调用）。 */
+  readonly documentId?: string;
+  readonly relPath?: string;
+  readonly documentName?: string;
+  /** 与 texts 等长对齐；缺省视为非索引调用。 */
+  readonly items?: readonly EmbedTextItem[];
+}
+
+export interface EmbedOptions {
+  readonly signal?: AbortSignal;
+  readonly context?: EmbeddingCallContext;
+}
+
 export interface Embedder {
-  embed(texts: readonly string[], signal?: AbortSignal): Promise<EmbeddingBatch>;
+  embed(texts: readonly string[], options?: EmbedOptions): Promise<EmbeddingBatch>;
+}
+
+/** 单次接口尝试的结果（不含轮次/批次信息，由 #embedBatch 补齐成完整事件）。 */
+interface EmbeddingAttemptOutcome {
+  readonly attempt: number;
+  readonly status: 'success' | 'failed';
+  readonly latencyMs: number;
+  readonly tokenCount: number | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+}
+
+/**
+ * 单次接口请求（含每一次重试）的遥测事件：client 在每次 HTTP 尝试结束后发出。
+ * 记录粒度是"真实发生的接口调用"，不是一次 embed() 方法调用。
+ */
+export interface EmbeddingRequestEvent {
+  /** 同一轮 embed() 调用的唯一标识（并发的子批共享）。 */
+  readonly roundId: string;
+  /** 子批序号（0 起）。 */
+  readonly batchIndex: number;
+  /** 该子批内的尝试序号（0 起；重试递增）。 */
+  readonly attempt: number;
+  readonly status: 'success' | 'failed';
+  readonly latencyMs: number;
+  readonly tokenCount: number | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly model: string;
+  /** 本请求实际发送的文本。 */
+  readonly texts: readonly string[];
+  /** 与 texts 对齐的来源明细切片；非索引调用为 undefined。 */
+  readonly items: readonly EmbedTextItem[] | undefined;
+  readonly context: EmbeddingCallContext | undefined;
 }
 
 interface EmbeddingResponse {
@@ -85,6 +145,8 @@ export interface EmbeddingClientOptions {
   readonly rateLimitRetryDelaySeconds?: number;
   readonly client?: EmbeddingsClientLike;
   readonly sleep?: (seconds: number, signal?: AbortSignal) => Promise<void>;
+  /** 每次接口请求（含每次重试）的遥测钩子；实现方必须自行吞错，不得影响请求流程。 */
+  readonly onRequest?: (event: EmbeddingRequestEvent) => void;
 }
 
 export class OpenAICompatibleEmbeddingClient implements Embedder {
@@ -95,6 +157,7 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
   readonly #maxRetries: number;
   readonly #rateLimitRetryDelaySeconds: number;
   readonly #sleep: (seconds: number, signal?: AbortSignal) => Promise<void>;
+  readonly #onRequest: ((event: EmbeddingRequestEvent) => void) | undefined;
   #resolvedClient: EmbeddingsClientLike | undefined;
   readonly #clientProvider: () => Promise<EmbeddingsClientLike>;
 
@@ -118,6 +181,7 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
     this.#maxRetries = options.maxRetries ?? 4;
     this.#rateLimitRetryDelaySeconds = rateLimitDelay;
     this.#sleep = options.sleep ?? sleep;
+    this.#onRequest = options.onRequest;
     const injected = options.client;
     this.#clientProvider =
       injected === undefined
@@ -135,20 +199,32 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
     return this.#resolvedClient;
   }
 
-  async embed(texts: readonly string[], signal?: AbortSignal): Promise<EmbeddingBatch> {
+  async embed(texts: readonly string[], options?: EmbedOptions): Promise<EmbeddingBatch> {
+    const signal = options?.signal;
     signal?.throwIfAborted();
     if (texts.length === 0) return { vectors: [], promptTokens: 0 };
     if (texts.some((text) => typeof text !== 'string' || !text.trim())) {
       throw new Error('Embedding inputs must be non-empty strings');
     }
+    const context = options?.context;
+    const items = context?.items;
+    if (items !== undefined && items.length !== texts.length) {
+      throw new Error('Embedding call context items must align with texts');
+    }
     const batches: string[][] = [];
+    const batchItems: (readonly EmbedTextItem[] | undefined)[] = [];
     for (let start = 0; start < texts.length; start += this.#batchSize) {
       batches.push(texts.slice(start, start + this.#batchSize) as string[]);
+      batchItems.push(items?.slice(start, start + this.#batchSize));
     }
+    // 同一轮 embed() 的所有接口请求共享一个轮次标识（并发子批按时间交错时仍可归组）
+    const roundId = crypto.randomUUID().replaceAll('-', '');
     // 任一子批失败也要等所有批次（含排队与重试）结束后再抛出——
     // 保证失败批次不会提前释放对账锁（skb 语义，test_failed_round_waits…）
     const settled = await Promise.allSettled(
-      batches.map((batch) => this.#embedBatch(batch, signal)),
+      batches.map((batch, batchIndex) =>
+        this.#embedBatch(batch, batchIndex, roundId, batchItems[batchIndex], context, signal),
+      ),
     );
     const vectors: number[][] = [];
     let totalTokens = 0;
@@ -173,10 +249,24 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
 
   async #embedBatch(
     batch: string[],
+    batchIndex: number,
+    roundId: string,
+    batchItems: readonly EmbedTextItem[] | undefined,
+    context: EmbeddingCallContext | undefined,
     signal?: AbortSignal,
   ): Promise<{ vectors: number[][]; promptTokens: number | null }> {
     const client = await this.#getClient();
-    const response = await this.#createWithRetry(client, batch, signal);
+    const response = await this.#createWithRetry(client, batch, signal, (outcome) =>
+      this.#onRequest?.({
+        ...outcome,
+        roundId,
+        batchIndex,
+        model: this.#model,
+        texts: batch,
+        items: batchItems,
+        context,
+      }),
+    );
     return {
       vectors: validatedVectors(response, batch.length, this.#dimensions),
       promptTokens: response.usage?.prompt_tokens ?? null,
@@ -187,13 +277,15 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
     client: EmbeddingsClientLike,
     batch: string[],
     signal?: AbortSignal,
+    emit?: (outcome: EmbeddingAttemptOutcome) => void,
   ): Promise<EmbeddingResponse> {
     for (let attempt = 0; ; attempt += 1) {
       // 取消优先：每轮重试前先响应中止，已取消的请求不再发起（架构设计 §10.3）。
       signal?.throwIfAborted();
+      const startedAt = Date.now();
       try {
         // 取消信号透传 SDK：请求本身可被中止。
-        return await client.embeddings.create(
+        const response = await client.embeddings.create(
           {
             model: this.#model,
             input: batch,
@@ -202,10 +294,29 @@ export class OpenAICompatibleEmbeddingClient implements Embedder {
           },
           { signal },
         );
+        emit?.({
+          attempt,
+          status: 'success',
+          latencyMs: Date.now() - startedAt,
+          tokenCount: response.usage?.prompt_tokens ?? null,
+          errorCode: null,
+          errorMessage: null,
+        });
+        return response;
       } catch (rawError) {
         // 中止优先于重试分类：取消后立即停止，不进入退避重试。
         signal?.throwIfAborted();
         const error = classifyError(rawError);
+        // 每次接口尝试都计遥测（含最终失败的那次）；中止的尝试不计（是否已达服务端未知）。
+        // errorMessage 取分类后的文案（刻意不含响应体与输入文本，skb 语义）。
+        emit?.({
+          attempt,
+          status: 'failed',
+          latencyMs: Date.now() - startedAt,
+          tokenCount: null,
+          errorCode: error.code,
+          errorMessage: error.message,
+        });
         if (!error.retryable || attempt >= this.#maxRetries) throw error;
         const retryAfter = retryAfterSeconds(rawError);
         if (error.code === 'rate_limited') {

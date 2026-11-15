@@ -126,6 +126,45 @@ export interface EmbeddingConnectionTestJson {
   error?: string;
 }
 
+/** 一条索引类 embedding 接口调用记录（每次真实请求一行，含子批与重试）。 */
+export interface EmbeddingCallJson {
+  id: string;
+  triggeredAt: string;
+  status: string;
+  model: string;
+  /** 同一轮 embed() 调用的唯一标识（一次索引可能拆多个子批、各子批可能重试）。 */
+  roundId: string;
+  /** 子批序号（0 起）。 */
+  batchIndex: number;
+  /** 该子批内的尝试序号（0 起；重试递增）。 */
+  attempt: number;
+  textCount: number;
+  tokenCount: number | null;
+  durationMs: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  documentId: string;
+  relPath: string;
+  documentName: string;
+}
+
+export interface EmbeddingCallItemJson {
+  textIndex: number;
+  chunkId: string | null;
+  ordinal: number | null;
+  contentHash: string | null;
+  contentPreview: string | null;
+  tokenCount: number | null;
+  sectionPath: string | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+}
+
+export interface EmbeddingCallDetailJson {
+  call: EmbeddingCallJson;
+  items: EmbeddingCallItemJson[];
+}
+
 export const PAGE_ACTIONS = [
   'get_stats',
   'get_sync_status',
@@ -142,6 +181,9 @@ export const PAGE_ACTIONS = [
   'get_config',
   'update_config',
   'test_connection',
+  'list_embedding_calls',
+  'get_embedding_call',
+  'clear_embedding_calls',
 ] as const;
 
 /** 测试 embedding 连接：传入表单草稿，缺省字段回退已保存配置。 */
@@ -152,4 +194,19 @@ export function testEmbeddingConnection(draft: {
   dimensions?: number;
 }): Promise<EmbeddingConnectionTestJson> {
   return callPage<EmbeddingConnectionTestJson>('test_connection', draft);
+}
+
+/** 索引类 embedding 调用记录（仅文档索引；检索与连接测试不记录）。 */
+export function listEmbeddingCalls(
+  input: { status?: string; limit?: number; offset?: number } = {},
+): Promise<{ total: number; items: EmbeddingCallJson[] }> {
+  return callPage<{ total: number; items: EmbeddingCallJson[] }>('list_embedding_calls', input);
+}
+
+export function getEmbeddingCall(callId: string): Promise<EmbeddingCallDetailJson> {
+  return callPage<EmbeddingCallDetailJson>('get_embedding_call', { callId });
+}
+
+export function clearEmbeddingCalls(): Promise<{ cleared: boolean }> {
+  return callPage<{ cleared: boolean }>('clear_embedding_calls', {});
 }

@@ -3,10 +3,14 @@ import { Badge, Button, Dialog, EmptyState, Field, Icon, IconButton, Tabs } from
 import type { ModulePageProps } from '@reisa/module-sdk';
 import {
   callPage,
+  getEmbeddingCall,
+  listEmbeddingCalls,
   pageBridgeAvailable,
   pickPath,
   type DocumentContentJson,
   type DocumentJson,
+  type EmbeddingCallDetailJson,
+  type EmbeddingCallJson,
   type SearchHitJson,
   type SearchResultJson,
   type SourceJson,
@@ -18,7 +22,7 @@ import './KnowledgePage.css';
 
 /**
  * 知识库工作区（module-ui-design §3，多来源模型）：
- * 左侧来源列表 + 主区"文档 / 检索测试"两个视图。
+ * 左侧来源列表 + 主区"文档 / 检索测试 / 调用记录"三个视图。
  * 数据一律经页面服务通道获取；管理操作绝不进入 Agent 能力集合。
  */
 
@@ -26,6 +30,11 @@ const STATUS_LABELS: Record<string, string> = {
   indexed: '已索引',
   error: '失败',
   manual_required: '待人工',
+};
+
+const CALL_STATUS_LABELS: Record<string, string> = {
+  success: '成功',
+  failed: '失败',
 };
 
 const MODE_LABELS: Record<string, string> = {
@@ -69,6 +78,13 @@ export function KnowledgePage({ openSettings, notify }: ModulePageProps) {
   const [editingRules, setEditingRules] = useState<string | null>(null);
   const [rulesDraft, setRulesDraft] = useState('');
   const [errorText, setErrorText] = useState('');
+  const [calls, setCalls] = useState<EmbeddingCallJson[]>([]);
+  const [callTotal, setCallTotal] = useState(0);
+  const [callStatusFilter, setCallStatusFilter] = useState('');
+  const [callLoading, setCallLoading] = useState(false);
+  const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
+  const [callDetail, setCallDetail] = useState<EmbeddingCallDetailJson | null>(null);
+  const [callDetailLoading, setCallDetailLoading] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const available = pageBridgeAvailable();
 
@@ -212,6 +228,50 @@ export function KnowledgePage({ openSettings, notify }: ModulePageProps) {
       }
       notify('文件已上传，后台将自动索引');
     });
+  };
+
+  /** 调用记录列表：仅在「调用记录」视图加载与轮询（与文档列表的 5 秒节奏一致）。 */
+  const loadCalls = useCallback(async () => {
+    if (!available) return;
+    try {
+      const result = await listEmbeddingCalls({
+        limit: 100,
+        ...(callStatusFilter ? { status: callStatusFilter } : {}),
+      });
+      setCalls(result.items);
+      setCallTotal(result.total);
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCallLoading(false);
+    }
+  }, [available, callStatusFilter]);
+
+  useEffect(() => {
+    if (view !== '调用记录') return;
+    setCallLoading(true);
+    void loadCalls();
+    const timer = setInterval(() => void loadCalls(), 5000);
+    return () => clearInterval(timer);
+  }, [view, loadCalls]);
+
+  /** 展开一行加载 chunk 明细；再点收起。明细按 call.id 校验，避免列表刷新后展示错位。 */
+  const toggleCall = async (call: EmbeddingCallJson) => {
+    if (expandedCallId === call.id) {
+      setExpandedCallId(null);
+      setCallDetail(null);
+      return;
+    }
+    setExpandedCallId(call.id);
+    setCallDetailLoading(true);
+    try {
+      setCallDetail(await getEmbeddingCall(call.id));
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+      setExpandedCallId(null);
+    } finally {
+      setCallDetailLoading(false);
+    }
   };
 
   const selectedSource = sources.find((source) => source.id === selectedSourceId);
@@ -449,31 +509,43 @@ export function KnowledgePage({ openSettings, notify }: ModulePageProps) {
         <section className="knowledge-content-panel">
           <div className="knowledge-content-heading">
             <div className="knowledge-content-title">
-              <h2>{view === '文档' ? sourceName : '全部来源检索'}</h2>
+              <h2>
+                {view === '文档'
+                  ? sourceName
+                  : view === '检索测试'
+                    ? '全部来源检索'
+                    : 'Embedding 调用记录'}
+              </h2>
               <p title={selectedSource?.path}>
                 {view === '文档'
                   ? (selectedSource?.path ?? '查看文档索引状态，或选择文档预览内容。')
-                  : '输入问题或关键词，查看知识库返回的相关片段。'}
+                  : view === '检索测试'
+                    ? '输入问题或关键词，查看知识库返回的相关片段。'
+                    : '文档索引时调用 Embedding 服务的历史记录，仅供排查与核对。'}
               </p>
             </div>
-            <input
-              ref={fileInput}
-              type="file"
-              accept=".md,.txt"
-              multiple
-              hidden
-              onChange={(event) => {
-                void uploadFiles(event.target.files);
-                event.target.value = '';
-              }}
-            />
-            <Button onClick={() => fileInput.current?.click()} disabled={busy}>
-              <Icon name="upload" size={15} />
-              上传文档
-            </Button>
+            {view !== '调用记录' && (
+              <>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept=".md,.txt"
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    void uploadFiles(event.target.files);
+                    event.target.value = '';
+                  }}
+                />
+                <Button onClick={() => fileInput.current?.click()} disabled={busy}>
+                  <Icon name="upload" size={15} />
+                  上传文档
+                </Button>
+              </>
+            )}
           </div>
 
-          <Tabs items={['文档', '检索测试']} value={view} onChange={setView} />
+          <Tabs items={['文档', '检索测试', '调用记录']} value={view} onChange={setView} />
 
           {view === '文档' && (
             <>
@@ -560,16 +632,23 @@ export function KnowledgePage({ openSettings, notify }: ModulePageProps) {
                               </small>
                             </div>
                           </div>
-                          {document.status === 'manual_required' && (
+                          {(document.status === 'manual_required' ||
+                            document.status === 'error') && (
                             <div className="knowledge-document-action">
-                              <span>文档超过自动索引门槛</span>
+                              <span>
+                                {document.status === 'manual_required'
+                                  ? '文档超过自动索引门槛'
+                                  : '自动索引失败，可手动重新提交'}
+                              </span>
                               <Button
                                 variant="ghost"
                                 onClick={() => resubmit(document.id)}
                                 disabled={busy}
                               >
                                 <Icon name="upload" size={13} />
-                                手动提交分析
+                                {document.status === 'manual_required'
+                                  ? '手动提交分析'
+                                  : '重新索引'}
                               </Button>
                             </div>
                           )}
@@ -696,6 +775,135 @@ export function KnowledgePage({ openSettings, notify }: ModulePageProps) {
                     />
                   )}
                 </>
+              )}
+            </div>
+          )}
+
+          {view === '调用记录' && (
+            <div className="knowledge-calls">
+              <div className="knowledge-document-toolbar">
+                <span>
+                  {callLoading && calls.length === 0
+                    ? '正在加载调用记录…'
+                    : `共 ${callTotal} 条调用记录`}
+                </span>
+                <select
+                  aria-label="按调用状态筛选"
+                  value={callStatusFilter}
+                  onChange={(event) => setCallStatusFilter(event.target.value)}
+                >
+                  <option value="">全部状态</option>
+                  <option value="success">成功</option>
+                  <option value="failed">失败</option>
+                </select>
+              </div>
+              {callLoading && calls.length === 0 ? (
+                <div className="knowledge-loading" role="status">
+                  <Icon name="loading" size={22} />
+                  正在加载调用记录…
+                </div>
+              ) : calls.length === 0 ? (
+                <EmptyState
+                  icon="history"
+                  title="还没有 embedding 调用记录"
+                  description="文件被索引时才会调用 Embedding 服务并产生记录；未配置 Embedding 服务时不会有调用。"
+                />
+              ) : (
+                <ul className="knowledge-call-list">
+                  {calls.map((call) => {
+                    const expanded = expandedCallId === call.id;
+                    const detailReady = callDetail?.call.id === call.id;
+                    return (
+                      <li key={call.id} className="knowledge-call-item">
+                        <button
+                          type="button"
+                          className={'knowledge-call-row' + (expanded ? ' expanded' : '')}
+                          aria-expanded={expanded}
+                          onClick={() => void toggleCall(call)}
+                        >
+                          <span className="knowledge-call-symbol">
+                            <Icon
+                              name={call.status === 'success' ? 'document' : 'help'}
+                              size={17}
+                            />
+                          </span>
+                          <span className="knowledge-call-copy">
+                            <strong title={call.relPath}>{call.documentName}</strong>
+                            <small>
+                              {formatTime(call.triggeredAt)} · {call.model || '未知模型'}
+                            </small>
+                          </span>
+                          <span className="knowledge-call-metrics">
+                            {call.textCount} 片段
+                            {call.tokenCount !== null ? ` · ${call.tokenCount} tokens` : ''}
+                            {` · ${(call.durationMs / 1000).toFixed(1)} 秒`}
+                            {call.attempt > 0 ? ` · 第 ${call.attempt + 1} 次尝试` : ''}
+                          </span>
+                          <Badge tone={call.status === 'success' ? 'success' : 'danger'}>
+                            {CALL_STATUS_LABELS[call.status] ?? call.status}
+                          </Badge>
+                        </button>
+                        {expanded && (
+                          <div className="knowledge-call-detail">
+                            {!detailReady ? (
+                              <p className="knowledge-call-detail-note" role="status">
+                                <Icon name="loading" size={14} />
+                                正在加载明细…
+                              </p>
+                            ) : (
+                              <>
+                                {callDetail.call.errorMessage !== null && (
+                                  <p className="knowledge-call-error">
+                                    <Icon name="help" size={14} />
+                                    {callDetail.call.errorCode ?? 'request_failed'}：
+                                    {callDetail.call.errorMessage}
+                                  </p>
+                                )}
+                                {callDetail.items.length === 0 ? (
+                                  <p className="knowledge-call-detail-note">
+                                    该记录没有 chunk 明细。
+                                  </p>
+                                ) : (
+                                  <table className="knowledge-call-items">
+                                    <thead>
+                                      <tr>
+                                        <th>#</th>
+                                        <th>行区间</th>
+                                        <th>章节</th>
+                                        <th>tokens</th>
+                                        <th>内容预览</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {callDetail.items.map((item) => (
+                                        <tr key={item.textIndex}>
+                                          <td>{item.ordinal ?? item.textIndex}</td>
+                                          <td>
+                                            {item.lineStart !== null && item.lineEnd !== null
+                                              ? `${item.lineStart}–${item.lineEnd}`
+                                              : '—'}
+                                          </td>
+                                          <td>{item.sectionPath ?? '—'}</td>
+                                          <td>{item.tokenCount ?? '—'}</td>
+                                          <td
+                                            className="knowledge-call-preview"
+                                            title={item.contentPreview ?? ''}
+                                          >
+                                            {item.contentPreview ?? '—'}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </div>
           )}

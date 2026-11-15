@@ -115,7 +115,14 @@ test('文档 upsert 与列表过滤', async () => {
   assert.equal(db.listDocuments({ sourceId: source.id }).total, 2);
   db.upsertDocument({ ...base, id: 'd1', relPath: 'a.md', name: 'a.md', status: 'error' });
   assert.equal(db.getDocument('d1')?.status, 'error', 'upsert 按 id 覆盖');
-  db.upsertDocument({ ...base, id: 'd2', relPath: 'b.md', name: 'b.md', status: 'error', retryCount: 3 });
+  db.upsertDocument({
+    ...base,
+    id: 'd2',
+    relPath: 'b.md',
+    name: 'b.md',
+    status: 'error',
+    retryCount: 3,
+  });
   assert.equal(db.getDocument('d2')?.retryCount, 3, 'retry_count 随 upsert 写入并回读');
 });
 
@@ -282,4 +289,149 @@ test('close() 释放连接后索引目录可被删除（重配置重建路径）
   const reopened = await ChunkStore.open(indexDir, 16);
   assert.equal(await reopened.chunkCount(), 0, '删除后为全新空索引');
   await reopened.close();
+});
+
+// ---- embedding 调用记录（knowledge-embedding-call-log 设计）----
+
+function makeCall(id, triggeredAt, overrides = {}) {
+  return {
+    id,
+    triggeredAt,
+    status: 'success',
+    model: 'fake-model',
+    roundId: 'round-1',
+    batchIndex: 0,
+    attempt: 0,
+    textCount: 2,
+    tokenCount: 9,
+    durationMs: 120,
+    errorCode: null,
+    errorMessage: null,
+    documentId: 'doc-1',
+    relPath: 'a.md',
+    documentName: 'a.md',
+    ...overrides,
+  };
+}
+
+function makeCallItem(callId, textIndex, overrides = {}) {
+  return {
+    callId,
+    textIndex,
+    chunkId: `chunk-${textIndex}`,
+    ordinal: textIndex,
+    contentHash: `hash-${textIndex}`,
+    contentPreview: `预览${textIndex}`,
+    tokenCount: 4,
+    sectionPath: '标题',
+    lineStart: textIndex + 1,
+    lineEnd: textIndex + 2,
+    ...overrides,
+  };
+}
+
+test('embedding 调用记录：insert/list 按时间倒序、状态筛选与分页', async () => {
+  const db = new MetadataDB(join(await makeTemp(), 'kb.db'));
+  db.insertEmbeddingCall(makeCall('c1', '2026-11-01T00:00:00Z'), [
+    makeCallItem('c1', 0),
+    makeCallItem('c1', 1),
+  ]);
+  db.insertEmbeddingCall(
+    makeCall('c2', '2026-11-02T00:00:00Z', {
+      status: 'failed',
+      tokenCount: null,
+      errorCode: 'rate_limited',
+      errorMessage: '429',
+    }),
+    [],
+  );
+  db.insertEmbeddingCall(makeCall('c0', '2020-01-01T00:00:00Z'), []);
+
+  const all = db.listEmbeddingCalls();
+  assert.equal(all.total, 3);
+  assert.deepEqual(
+    all.items.map((call) => call.id),
+    ['c2', 'c1', 'c0'],
+    '按时间倒序',
+  );
+
+  const failed = db.listEmbeddingCalls({ status: 'failed' });
+  assert.equal(failed.total, 1);
+  assert.equal(failed.items[0]?.errorCode, 'rate_limited');
+  assert.equal(failed.items[0]?.tokenCount, null);
+
+  const paged = db.listEmbeddingCalls({ limit: 1, offset: 1 });
+  assert.equal(paged.items[0]?.id, 'c1');
+});
+
+test('embedding 调用记录：get 含明细（按 text_index 排序），不存在返回 undefined', async () => {
+  const db = new MetadataDB(join(await makeTemp(), 'kb.db'));
+  db.insertEmbeddingCall(makeCall('c1', '2026-11-01T00:00:00Z'), [
+    makeCallItem('c1', 1),
+    makeCallItem('c1', 0),
+  ]);
+  const detail = db.getEmbeddingCall('c1');
+  assert.equal(detail?.call.documentName, 'a.md');
+  assert.deepEqual(
+    detail?.items.map((item) => item.textIndex),
+    [0, 1],
+    '明细按 text_index 排序',
+  );
+  assert.equal(db.getEmbeddingCall('missing'), undefined);
+});
+
+test('embedding 调用记录：保留期清理只删过期（含明细），clear 全清', async () => {
+  const db = new MetadataDB(join(await makeTemp(), 'kb.db'));
+  db.insertEmbeddingCall(makeCall('old', '2020-01-01T00:00:00Z'), [makeCallItem('old', 0)]);
+  db.insertEmbeddingCall(makeCall('keep', '2026-11-01T00:00:00Z'), [makeCallItem('keep', 0)]);
+
+  const removed = db.deleteEmbeddingCallsBefore('2021-01-01T00:00:00Z');
+  assert.equal(removed, 1, '只删除截止时间前的主表行');
+  assert.equal(db.listEmbeddingCalls().total, 1);
+  assert.equal(db.getEmbeddingCall('keep')?.items.length, 1, '未过期记录明细保留');
+
+  db.clearEmbeddingCalls();
+  assert.equal(db.listEmbeddingCalls().total, 0);
+  assert.equal(db.getEmbeddingCall('keep'), undefined);
+  assert.equal(db.countEmbeddingCalls(), 0);
+});
+
+test('老库迁移：embedding_calls 缺轮次/批次/尝试列时自动补列（回归：no such column named round_id）', async () => {
+  const dir = await makeTemp();
+  const path = join(dir, 'kb.db');
+  const legacy = new DatabaseSync(path);
+  // 记录粒度重构前的表形状（无 round_id / batch_index / attempt）
+  legacy.exec(
+    'CREATE TABLE embedding_calls (' +
+      'id TEXT PRIMARY KEY, triggered_at TEXT NOT NULL, status TEXT NOT NULL, ' +
+      "model TEXT NOT NULL DEFAULT '', text_count INTEGER NOT NULL DEFAULT 0, " +
+      'token_count INTEGER, duration_ms INTEGER NOT NULL DEFAULT 0, ' +
+      'error_code TEXT, error_message TEXT, document_id TEXT NOT NULL, ' +
+      'rel_path TEXT NOT NULL, document_name TEXT NOT NULL)',
+  );
+  legacy
+    .prepare(
+      'INSERT INTO embedding_calls (id, triggered_at, status, document_id, rel_path, document_name) ' +
+        "VALUES ('old', '2026-11-08T00:00:00Z', 'success', 'doc-1', 'a.md', 'a.md')",
+    )
+    .run();
+  legacy.close();
+
+  const database = new MetadataDB(path);
+  try {
+    // 老行可读，新列带默认值
+    const old = database.listEmbeddingCalls().items.find((call) => call.id === 'old');
+    assert.equal(old?.status, 'success');
+    assert.equal(old?.roundId, '');
+    assert.equal(old?.batchIndex, 0);
+    assert.equal(old?.attempt, 0);
+    // 新行可插入（回归用户报告的 embedding_call_log_failed: no column named round_id）
+    database.insertEmbeddingCall(makeCall('new', '2026-11-09T00:00:00Z'), [makeCallItem('new', 0)]);
+    assert.equal(database.listEmbeddingCalls().total, 2);
+    const detail = database.getEmbeddingCall('new');
+    assert.equal(detail?.call.roundId, 'round-1');
+    assert.equal(detail?.items.length, 1);
+  } finally {
+    database.close();
+  }
 });

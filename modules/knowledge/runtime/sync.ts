@@ -348,7 +348,16 @@ export class SyncService {
     }
     let vectors: number[][];
     try {
-      const batch = await this.#embedder.embed(chunks.map((chunk) => chunk.content));
+      // context 随调用透传至 client 的接口级遥测：每次真实请求（含重试）
+      // 都携带文档身份与 chunk 明细切片，由调用记录器逐请求落库（旁路）
+      const batch = await this.#embedder.embed(chunks.map((chunk) => chunk.content), {
+        context: {
+          documentId,
+          relPath: snapshot.relPath,
+          documentName: base.name,
+          items: chunks,
+        },
+      });
       vectors = batch.vectors;
     } catch (error) {
       this.#logDocumentFailure('document_embed_failed', documentId, snapshot.relPath, error);

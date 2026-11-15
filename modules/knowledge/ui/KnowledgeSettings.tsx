@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Badge, Button, Field, Icon } from '@reisa/ui';
+import { Badge, Button, Dialog, Field, Icon } from '@reisa/ui';
 import type { ModuleSettingsProps } from '@reisa/module-sdk';
-import { callPage, pageBridgeAvailable, testEmbeddingConnection } from './client.ts';
+import {
+  callPage,
+  clearEmbeddingCalls,
+  pageBridgeAvailable,
+  testEmbeddingConnection,
+} from './client.ts';
 import type { EmbeddingConnectionTestJson } from './client.ts';
 import './KnowledgeSettings.css';
 
@@ -24,12 +29,18 @@ interface EmbeddingSettingsJson {
   rateLimitRetryDelaySeconds: number;
 }
 
+interface EmbeddingCallLogSettingsJson {
+  enabled: boolean;
+  retentionDays: number;
+}
+
 interface SettingsJson {
   uploadMaxBytes: number;
   autoIndexMaxBytes: number;
   syncIntervalSeconds: number;
   syncDebounceSeconds: number;
   embedding: EmbeddingSettingsJson;
+  embeddingCallLog: EmbeddingCallLogSettingsJson;
 }
 
 const MIB = 1024 * 1024;
@@ -45,6 +56,8 @@ export function KnowledgeSettings({ notify, close }: ModuleSettingsProps) {
   const [apiKeySet, setApiKeySet] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<EmbeddingConnectionTestJson | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const available = pageBridgeAvailable();
 
   useEffect(() => {
@@ -75,6 +88,26 @@ export function KnowledgeSettings({ notify, close }: ModuleSettingsProps) {
   };
   const updateEmbedding = (patch: Partial<EmbeddingSettingsJson>): void => {
     setSettings({ ...settings, embedding: { ...settings.embedding, ...patch } });
+  };
+  const updateCallLog = (patch: Partial<EmbeddingCallLogSettingsJson>): void => {
+    setSettings({
+      ...settings,
+      embeddingCallLog: { ...settings.embeddingCallLog, ...patch },
+    });
+  };
+
+  /** 清空调用记录：独立于保存流程，立即生效。 */
+  const doClearCalls = async (): Promise<void> => {
+    setClearing(true);
+    try {
+      await clearEmbeddingCalls();
+      notify('调用记录已清空');
+      setConfirmingClear(false);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClearing(false);
+    }
   };
 
   const save = async (): Promise<void> => {
@@ -278,7 +311,73 @@ export function KnowledgeSettings({ notify, close }: ModuleSettingsProps) {
             </Field>
           </div>
         </section>
+
+        <section className="knowledge-settings-section" aria-label="Embedding 调用记录">
+          <header className="knowledge-settings-section-header">
+            <h3>
+              <Icon name="history" size={16} />
+              Embedding 调用记录
+            </h3>
+          </header>
+          <p className="knowledge-settings-description">
+            记录文档索引时对 Embedding 服务的每一次接口请求（含批次拆分与重试，文件与 chunk
+            明细），可在知识库页面的「调用记录」中查看；检索与连接测试不记录。
+          </p>
+          <div className="knowledge-settings-grid">
+            <Field label="记录调用" hint="关闭后不再产生新记录，已有记录保留">
+              <select
+                value={settings.embeddingCallLog.enabled ? 'on' : 'off'}
+                onChange={(event) => updateCallLog({ enabled: event.target.value === 'on' })}
+              >
+                <option value="on">开启</option>
+                <option value="off">关闭</option>
+              </select>
+            </Field>
+            <Field label="保留天数" hint="超期记录自动清理；0 表示永久保留">
+              <div className="knowledge-settings-number">
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={settings.embeddingCallLog.retentionDays}
+                  onChange={(event) => updateCallLog({ retentionDays: Number(event.target.value) })}
+                />
+                <span>天</span>
+              </div>
+            </Field>
+          </div>
+          <div className="knowledge-settings-test">
+            <small>记录保存在本机模块数据目录中，不进入 Agent 能力集合。</small>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={clearing || saving}
+              onClick={() => setConfirmingClear(true)}
+            >
+              <Icon name="trash" size={14} />
+              清空调用记录
+            </Button>
+          </div>
+        </section>
       </div>
+      <Dialog open={confirmingClear} onClose={() => setConfirmingClear(false)} title="清空调用记录">
+        <div className="knowledge-settings-clear">
+          <p>
+            将删除全部 embedding 调用记录（含 chunk 明细），此操作不可撤销。文档与索引本身不受影响。
+          </p>
+          <div className="knowledge-settings-clear-footer">
+            <small>清空后从零开始积累新的调用记录。</small>
+            <div>
+              <Button variant="ghost" onClick={() => setConfirmingClear(false)}>
+                取消
+              </Button>
+              <Button onClick={() => void doClearCalls()} disabled={clearing}>
+                {clearing ? '清空中…' : '确认清空'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Dialog>
       <footer className="knowledge-settings-footer">
         <p>
           <Icon name="help" size={15} />

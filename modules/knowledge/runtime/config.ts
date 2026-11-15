@@ -20,12 +20,20 @@ export interface EmbeddingSettings {
   readonly rateLimitRetryDelaySeconds: number;
 }
 
+/** embedding 调用记录（仅文档索引）；不进入 embeddingIdentity 指纹。 */
+export interface EmbeddingCallLogSettings {
+  readonly enabled: boolean;
+  /** 保留天数；0 = 永久保留。 */
+  readonly retentionDays: number;
+}
+
 export interface KnowledgeSettings {
   readonly uploadMaxBytes: number;
   readonly autoIndexMaxBytes: number;
   readonly syncIntervalSeconds: number;
   readonly syncDebounceSeconds: number;
   readonly embedding: EmbeddingSettings;
+  readonly embeddingCallLog: EmbeddingCallLogSettings;
 }
 
 export const DEFAULT_SETTINGS: KnowledgeSettings = {
@@ -43,6 +51,10 @@ export const DEFAULT_SETTINGS: KnowledgeSettings = {
     timeoutSeconds: 30.0,
     maxRetries: 4,
     rateLimitRetryDelaySeconds: 30.0,
+  },
+  embeddingCallLog: {
+    enabled: true,
+    retentionDays: 30,
   },
 };
 
@@ -87,6 +99,20 @@ function normalizeEmbedding(raw: unknown): EmbeddingSettings {
   };
 }
 
+function normalizeEmbeddingCallLog(raw: unknown): EmbeddingCallLogSettings {
+  const source = (raw ?? {}) as Partial<EmbeddingCallLogSettings>;
+  const defaults = DEFAULT_SETTINGS.embeddingCallLog;
+  return {
+    enabled: source.enabled !== false,
+    retentionDays: clamp(
+      source.retentionDays ?? defaults.retentionDays,
+      0,
+      3650,
+      defaults.retentionDays,
+    ),
+  };
+}
+
 function normalize(raw: unknown): KnowledgeSettings {
   const source = (raw ?? {}) as Partial<KnowledgeSettings>;
   return {
@@ -102,6 +128,7 @@ function normalize(raw: unknown): KnowledgeSettings {
       0,
     ),
     embedding: normalizeEmbedding(source.embedding),
+    embeddingCallLog: normalizeEmbeddingCallLog(source.embeddingCallLog),
   };
 }
 
