@@ -4,7 +4,8 @@ import { basename } from 'node:path';
 
 /**
  * 文档解析（迁移自 skb parsing.py）：仅支持 UTF-8 的 .md / .txt。
- * 解析语义必须与 skb 保持一致——迁移设计文档 §4.2 是行为基准。
+ * 解析语义与 skb 保持一致（迁移设计文档 §4.2 是行为基准），唯一偏离：
+ * markdown 标题行保留在小节正文首行（skb 会剥离），保证标题可被检索。
  */
 
 export const SUPPORTED_SUFFIXES = new Set<string>(['.md', '.txt']);
@@ -103,20 +104,19 @@ function parseMarkdown(displayName: string, content: string): ParsedDocument {
     const line = lines[index] ?? '';
     const lineNumber = index + 1;
     const match = MARKDOWN_HEADING.exec(line);
-    if (match === null) {
-      body.push(line);
-      lineStartChar += line.length + 1;
-      continue;
+    if (match !== null) {
+      flush();
+      const level = (match[1] as string).length;
+      const heading = (match[2] as string).trim();
+      // 低级标题截断高级标题（skb 标题栈语义）
+      headings.length = level - 1;
+      headings.push(heading);
+      // 标题行保留在所属小节正文的首行，不丢弃
+      bodyStart = lineNumber;
+      bodyStartChar = lineStartChar;
     }
-    flush();
-    const level = (match[1] as string).length;
-    const heading = (match[2] as string).trim();
-    // 低级标题截断高级标题（skb 标题栈语义）
-    headings.length = level - 1;
-    headings.push(heading);
-    bodyStart = lineNumber + 1;
+    body.push(line);
     lineStartChar += line.length + 1;
-    bodyStartChar = lineStartChar;
   }
   flush();
 

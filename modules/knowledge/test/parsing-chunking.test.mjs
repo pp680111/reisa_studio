@@ -15,7 +15,7 @@ async function write(root, name, content) {
   return path;
 }
 
-test('Markdown 小节携带标题路径（skb 标题栈语义）', async () => {
+test('Markdown 小节携带标题路径，标题行保留在正文首行（skb 标题栈语义）', async () => {
   const root = await mkdtemp(join(tmpdir(), 'kb-parse-'));
   const path = await write(
     root,
@@ -28,16 +28,23 @@ test('Markdown 小节携带标题路径（skb 标题栈语义）', async () => {
     parsed.sections.map((s) => s.sectionPath),
     ['Guide', 'Guide > Install'],
   );
-  assert.equal(parsed.sections[1]?.content, 'run the installer');
+  assert.equal(parsed.sections[0]?.content, '# Guide\n\nintro text');
+  assert.equal(parsed.sections[0]?.startLine, 1);
+  assert.equal(parsed.sections[1]?.content, '## Install\n\nrun the installer');
+  assert.equal(parsed.sections[1]?.startLine, 5);
 });
 
-test('低级标题截断高级标题栈', async () => {
+test('低级标题截断高级标题栈；无正文的标题独占一个小节', async () => {
   const root = await mkdtemp(join(tmpdir(), 'kb-parse-'));
   const path = await write(root, 'doc.md', '# A\n\n## B\n\n### C\n\ntext\n\n## B2\n\nmore\n');
   const parsed = await parseDocument(path);
   assert.deepEqual(
     parsed.sections.map((s) => s.sectionPath),
-    ['A > B > C', 'A > B2'],
+    ['A', 'A > B', 'A > B > C', 'A > B2'],
+  );
+  assert.deepEqual(
+    parsed.sections.map((s) => s.content),
+    ['# A', '## B', '### C\n\ntext', '## B2\n\nmore'],
   );
 });
 
