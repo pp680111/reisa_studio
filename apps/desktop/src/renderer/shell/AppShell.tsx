@@ -169,6 +169,16 @@ export function AppShell() {
       setRecent((previous) => [nextRoute, ...previous.filter((id) => id !== nextRoute)]);
   };
   const newConversation = () => {
+    // 若当前会话已经是没有任何消息与附件的空白会话，直接切换并复用，避免在侧栏连续堆叠无意义的空会话
+    const current = conversations.find((item) => item.id === activeConversationId);
+    if (
+      current &&
+      current.messages.length === 0 &&
+      (!current.attachments || current.attachments.length === 0)
+    ) {
+      setRoute('conversation');
+      return;
+    }
     // 桌面模式：先选角色再创建（角色创建后不可切换）；浏览器预览直接建本地会话
     if (bridge) {
       setRolePickerOpen(true);
@@ -499,6 +509,7 @@ export function AppShell() {
         pinned={pinned}
         recent={recent}
         navigate={navigate}
+        openSettings={(id) => setSettingsModuleId(id)}
       />
       <RolePickerDialog
         open={rolePickerOpen}

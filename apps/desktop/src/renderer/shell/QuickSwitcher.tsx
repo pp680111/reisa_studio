@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ModuleContribution } from '@reisa/module-sdk';
 import { Dialog, Icon } from '@reisa/ui';
-import { navigationModules } from './navigation.mjs';
+import { quickSwitcherModules } from './navigation.mjs';
 export function QuickSwitcher({
   open,
   close,
@@ -10,6 +10,7 @@ export function QuickSwitcher({
   pinned,
   recent,
   navigate,
+  openSettings,
 }: {
   open: boolean;
   close: () => void;
@@ -18,10 +19,11 @@ export function QuickSwitcher({
   pinned: readonly string[];
   recent: readonly string[];
   navigate: (id: string) => void;
+  openSettings?: (id: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
-  const matches = navigationModules(modules, enabled, pinned, recent, query);
+  const matches = quickSwitcherModules(modules, enabled, pinned, recent, query);
   useEffect(() => {
     if (open) {
       setQuery('');
@@ -34,6 +36,18 @@ export function QuickSwitcher({
     if (open)
       list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [open, selectedIndex, query]);
+
+  const handleSelect = (module: ModuleContribution) => {
+    if (module.navigation) {
+      navigate(module.id);
+    } else if (module.settings && openSettings) {
+      openSettings(module.id);
+    } else {
+      navigate(module.id);
+    }
+    close();
+  };
+
   return (
     <Dialog open={open} onClose={close} title="打开模块">
       <div className="quick-switcher">
@@ -67,8 +81,7 @@ export function QuickSwitcher({
               }
               if (e.key === 'Enter' && matches[selectedIndex]) {
                 e.preventDefault();
-                navigate(matches[selectedIndex]!.id);
-                close();
+                handleSelect(matches[selectedIndex]!);
               }
             }}
           />
@@ -89,12 +102,9 @@ export function QuickSwitcher({
               aria-selected={i === selectedIndex}
               className={i === selectedIndex ? 'active' : ''}
               onMouseMove={() => setIndex(i)}
-              onClick={() => {
-                navigate(module.id);
-                close();
-              }}
+              onClick={() => handleSelect(module)}
             >
-              <Icon name={module.navigation!.icon} />
+              <Icon name={module.navigation?.icon ?? (module.settings ? 'settings' : 'layers')} />
               <div>
                 <strong>{module.name}</strong>
                 <small>{module.description}</small>
